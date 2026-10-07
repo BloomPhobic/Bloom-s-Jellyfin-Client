@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
-from .client import HttpError, JellyfinClient, NotFound
+from .client import HttpError, JellyfinClient, NotFound, encode_params
 from .models import User
 
 POLL_INTERVAL = 3.0
@@ -50,12 +50,20 @@ def public_users(client: JellyfinClient) -> list[User]:
     return [User.from_json(u) for u in data]
 
 
-def user_image_url(client: JellyfinClient, user: User, max_width: int = 200) -> str | None:
-    """None means: draw the letter-avatar fallback."""
+def user_image_path(user: User, max_width: int = 256) -> str | None:
+    """Server-relative path (with query) for the avatar; None means draw a letter avatar.
+
+    Relative, so the image cache is shared between the LAN/Tailscale/public addresses.
+    """
     if not user.primary_image_tag:
         return None
-    return client.url(f"/Users/{user.id}/Images/Primary",
-                      {"tag": user.primary_image_tag, "maxWidth": max_width})
+    return f"/Users/{user.id}/Images/Primary?" + encode_params(
+        {"tag": user.primary_image_tag, "maxWidth": max_width, "quality": 90})
+
+
+def user_image_url(client: JellyfinClient, user: User, max_width: int = 256) -> str | None:
+    path = user_image_path(user, max_width)
+    return client.url(path) if path else None
 
 
 def current_user(client: JellyfinClient) -> User:

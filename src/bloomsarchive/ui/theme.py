@@ -34,6 +34,26 @@ QLabel[role="h1"] {{ font-size: 26px; font-weight: 600; }}
 QLabel[role="h2"] {{ font-size: 18px; font-weight: 600; }}
 QLabel[role="error"] {{ color: {DANGER}; }}
 
+QLabel[role="wordmark-small"] {{
+    font-family: "Playfair Display", "DejaVu Serif", Georgia, serif;
+    font-size: 22px; font-weight: 600; color: {TEXT};
+}}
+QLabel[role="subtitle"] {{ font-size: 17px; color: {MUTED}; }}
+QLabel[role="qccode"] {{
+    font-family: "JetBrains Mono", "Fira Code", "DejaVu Sans Mono", monospace;
+    font-size: 44px; font-weight: 700; letter-spacing: 6px; color: {ACCENT_HOVER};
+}}
+QLabel[role="notice"] {{
+    background: {RAISED}; border: 1px solid {ACCENT}; border-radius: 8px; padding: 8px 12px;
+}}
+QPushButton[role="primary"][size="large"] {{ padding: 12px 22px; font-size: 15px; }}
+QFrame[role="topbar"] {{ background: {SURFACE}; border-bottom: 1px solid {BORDER}; }}
+QToolButton[role="usermenu"] {{
+    background: {RAISED}; border: 1px solid {BORDER}; border-radius: 16px; padding: 6px 14px;
+}}
+QToolButton[role="usermenu"]:hover {{ border-color: {ACCENT}; }}
+QToolButton[role="usermenu"]::menu-indicator {{ image: none; width: 0; }}
+
 QFrame[role="card"] {{
     background: {SURFACE}; border: 1px solid {BORDER}; border-radius: {RADIUS}px;
 }}

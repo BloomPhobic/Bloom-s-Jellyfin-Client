@@ -7,8 +7,9 @@ A desktop client for [Jellyfin](https://jellyfin.org) media servers. Browse with
 | Phase | What | State |
 |---|---|---|
 | 1 | Skeleton, config, theme, API client, discovery, auth, `--selfcheck` | done |
-| 2 | Login screen (public users, password, Quick Connect) | next |
-| 3–9 | Home, library grid, details, mpv player, Lua UI, skip/up-next, settings | to do |
+| 2 | Login screen (profiles, password, manual login, Quick Connect), switch user, log out | done |
+| 3 | Home page with all rows | next |
+| 4–9 | Library grid, details, mpv player, Lua UI, skip/up-next, settings | to do |
 
 Phase 1 also includes the segment fetcher (`player/segments.py`) because `--selfcheck` reports which skip-intro source your server has.
 
@@ -17,13 +18,34 @@ Phase 1 also includes the segment fetcher (`player/segments.py`) because `--self
 ```sh
 sudo pacman -S pyside6 mpv python-keyring   # keyring is optional
 cd bloomsarchive
-python -m venv --system-site-packages .venv && . .venv/bin/activate
+python -m venv --system-site-packages .venv
+source .venv/bin/activate.fish        # fish; bash/zsh: source .venv/bin/activate
 pip install -e .
+bloomsarchive --install-desktop       # launcher entry; also fixes the portal app-id warning
 ```
 
 Other distributions: install mpv and PySide6 6.5 or newer from your package manager (or `pip install PySide6` inside the venv).
 
+Other distributions: install mpv and PySide6 6.5 or newer from your package manager (or `pip install PySide6` inside the venv).
+
 The API layer is standard-library only, so `--selfcheck` works even without PySide6.
+
+## Point it at your server
+
+The app tries a list of addresses for your server in order and uses the first one that answers. They're in
+`~/.config/bloomsarchive/settings.json` (created on first run) under `addresses`:
+
+```json
+"addresses": [
+  {"label": "Home LAN",  "url": "http://192.168.1.50:8096",     "public": false},
+  {"label": "Tailscale", "url": "http://100.64.0.10:8096",      "public": false},
+  {"label": "Public",    "url": "https://jellyfin.example.com", "public": true}
+]
+```
+
+Replace these examples with your own (one address is enough). `"public": true` marks an address reached over
+the internet: it's tried last with a longer timeout, and by default video won't stream over it
+(`network.never_stream_public`), so a slow or metered tunnel is only used for browsing.
 
 ## Point it at your server
 
@@ -59,7 +81,12 @@ Pinning the ServerId matters on shared networks (dorms, offices, public Wi-Fi): 
 bloomsarchive            # or: python -m bloomsarchive --debug
 ```
 
-Phase 1 opens the branded startup screen: it finds the server (last working address first, then a background re-probe that switches to a better address), asks you to confirm the server on first run, and restores a stored login.
+Startup finds the server (last working address first, then a background re-probe that switches to a better one), asks you to confirm the server on first run, and signs you straight in if your stored token is still valid. Otherwise you get the login screen:
+
+- **Profiles** — click your avatar. Users without a password sign in immediately; a user whose token is still stored (after *Switch user*) switches back without a password.
+- **Quick Connect** — shows a 6-digit code; approve it from any signed-in Jellyfin session (profile menu → Quick Connect). Expires after 5 minutes.
+- **Manual login** — for users hidden from the profile list.
+- *Switch user* keeps your token; *Log out* revokes it on the server. If the server ever rejects your token, you're sent back to sign in.
 
 ## Files
 
@@ -70,7 +97,9 @@ Phase 1 opens the branded startup screen: it finds the server (last working addr
 ## Development
 
 ```sh
-python tests/mock_jellyfin.py --port 8096            # fake server: Alice/hunter2, Guest/blank
+python tests/mock_jellyfin.py --port 8096            # fake server: Alice/hunter2, Guest/blank, Hidden/secret
+# try the app against it without touching your real settings:
+BLOOMSARCHIVE_CONFIG_DIR=/tmp/ba-mock bloomsarchive   # then set the LAN address to http://127.0.0.1:8096 in /tmp/ba-mock/settings.json
 python tests/mock_jellyfin.py --port 8096 --legacy --version 10.8.13
 cd tests && python -m unittest                       # or: pytest
 ```

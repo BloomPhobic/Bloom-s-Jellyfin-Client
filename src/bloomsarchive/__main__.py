@@ -6,13 +6,42 @@ import logging
 import sys
 
 
+_DASHES = "\u2010\u2011\u2012\u2013\u2014\u2015\u2212"
+
+
+def _normalize_dashes(argv: list[str]) -> list[str]:
+    """Flags pasted from rendered chat/markdown can arrive as typographic dashes."""
+    out = []
+    for a in argv:
+        i = 0
+        while i < len(a) and a[i] in _DASHES + "-":
+            i += 1
+        lead = a[:i]
+        if lead and any(c in _DASHES for c in lead):
+            # an em/en dash stands for "--"; hyphen-like singles count as one "-"
+            n = sum(2 if c in "\u2013\u2014" else 1 for c in lead)
+            a = "-" * min(n, 2) + a[i:]
+        out.append(a)
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="bloomsarchive", description="Bloom's Archive — Jellyfin desktop client")
     p.add_argument("--selfcheck", action="store_true", help="check the connection to your server and exit")
     p.add_argument("--pin", action="store_true", help="with --selfcheck: pin the found ServerId without asking")
     p.add_argument("--user", help="with --selfcheck: sign in as this user for the signed-in checks")
+    p.add_argument("--install-desktop", action="store_true", help="add a launcher entry (and fix the portal app-id warning)")
+    p.add_argument("--uninstall-desktop", action="store_true", help="remove the launcher entry")
     p.add_argument("--debug", action="store_true", help="verbose logging")
-    args = p.parse_args(argv)
+    args = p.parse_args(_normalize_dashes(sys.argv[1:] if argv is None else argv))
+
+    if args.install_desktop or args.uninstall_desktop:
+        from . import desktop
+        if args.install_desktop:
+            print(f"installed {desktop.install()}")
+        else:
+            print("removed" if desktop.uninstall() else "nothing to remove")
+        return 0
 
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.WARNING,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")

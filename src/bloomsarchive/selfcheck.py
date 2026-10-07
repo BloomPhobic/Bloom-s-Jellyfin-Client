@@ -214,7 +214,7 @@ def _sample(client: JellyfinClient, item_type: str, n: int) -> list[Item]:
     try:
         data = client.compat.call("items", params={
             "recursive": True, "includeItemTypes": item_type, "limit": n,
-            "fields": "MediaSources,Chapters", "sortBy": "DateCreated", "sortOrder": "Descending",
+            "fields": "MediaSources,MediaStreams,Chapters", "sortBy": "DateCreated", "sortOrder": "Descending",
         })
     except JellyfinError:
         return []
@@ -222,6 +222,11 @@ def _sample(client: JellyfinClient, item_type: str, n: int) -> list[Item]:
 
 
 def _range_test(client: JellyfinClient, item: Item, r: Report) -> None:
+    try:   # list endpoints may omit stream details; the item endpoint has them
+        item = Item.from_json(client.compat.call("item", item_id=item.id,
+                                                 params={"fields": "MediaSources,MediaStreams"}))
+    except JellyfinError:
+        pass
     source = item.media_sources[0] if item.media_sources else None
     path, params = stream_url_path(item.id)
     if source:

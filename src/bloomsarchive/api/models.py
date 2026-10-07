@@ -197,6 +197,15 @@ class Item:
 
     @classmethod
     def from_json(cls, d: dict) -> "Item":
+        item = cls._from_json(d)
+        # List endpoints may put streams on the item rather than its single source.
+        top = d.get("MediaStreams")
+        if top and len(item.media_sources) == 1 and not item.media_sources[0].streams:
+            item.media_sources[0].streams = [MediaStream.from_json(s) for s in top]
+        return item
+
+    @classmethod
+    def _from_json(cls, d: dict) -> "Item":
         return cls(
             id=_g(d, "Id", ""),
             name=_g(d, "Name", ""),

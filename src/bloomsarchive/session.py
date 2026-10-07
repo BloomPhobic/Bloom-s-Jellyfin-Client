@@ -99,25 +99,49 @@ class Session:
         return True, ""
 
     # ------------------------------------------------------------------ login
-    def restore_login(self) -> User | None:
-        """Use the stored token for the last user, if it's still valid."""
-        last = self.settings.get("last_user")
+    def login_client(self) -> JellyfinClient:
+        """A throwaway client for a login attempt.
+
+        Password and Quick Connect attempts authenticate this one; only a
+        successful result is applied to the real client (complete_login), so a
+        cancelled or failed attempt never leaves the session half signed in.
+        """
+        c = JellyfinClient(self.client.base_url, device_id=self.client.device_id,
+                           device_name=self.client.device_name)
+        c.server_info = self.client.server_info
+        return c
+
+    def has_stored_token(self, user_id: str) -> bool:
         sid = self.server_id
-        if not (last and sid):
-            return None
-        tok = self.tokens.get(sid, last.get("id", ""))
+        return bool(sid and self.tokens.get(sid, user_id))
+
+    def try_stored_token(self, user_id: str) -> User | None:
+        """Sign in as user_id with their stored token, if it's still valid."""
+        sid = self.server_id
+        tok = self.tokens.get(sid, user_id) if sid else None
         if not tok:
             return None
-        self.client.token, self.client.user_id = tok, last["id"]
+        probe = self.login_client()
+        probe.token, probe.user_id = tok, user_id
         try:
-            self.user = auth.current_user(self.client)
-            return self.user
+            user = auth.current_user(probe)
         except Unauthorized:
-            self.tokens.clear(sid, last["id"])
+            self.tokens.clear(sid, user_id)
+            return None
         except JellyfinError as e:
             log.warning("could not validate stored token: %s", e)
-        self.client.token = self.client.user_id = None
-        return None
+            return None
+        self.client.token, self.client.user_id = tok, user.id
+        self.user = user
+        self.settings.set("last_user", {"id": user.id, "name": user.name})
+        return user
+
+    def restore_login(self) -> User | None:
+        """Startup: use the stored token for the last user, if it's still valid."""
+        last = self.settings.get("last_user")
+        if not last or not last.get("id"):
+            return None
+        return self.try_stored_token(last["id"])
 
     def complete_login(self, result: auth.AuthResult) -> User:
         sid = self.server_id or result.server_id
@@ -127,6 +151,11 @@ class Session:
             self.tokens.set(sid, result.user.id, result.token)
         self.settings.set("last_user", {"id": result.user.id, "name": result.user.name})
         return result.user
+
+    def switch_user(self) -> None:
+        """Back to the profile picker; the token is kept so switching back is instant."""
+        self.client.token = self.client.user_id = None
+        self.user = None
 
     def logout(self, forget_user: bool = False) -> None:
         sid, uid = self.server_id, self.client.user_id
