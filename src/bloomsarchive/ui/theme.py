@@ -54,6 +54,30 @@ QToolButton[role="usermenu"] {{
 QToolButton[role="usermenu"]:hover {{ border-color: {ACCENT}; }}
 QToolButton[role="usermenu"]::menu-indicator {{ image: none; width: 0; }}
 
+QFrame[role="sidebar"] {{ background: {SURFACE}; border-right: 1px solid {BORDER}; }}
+QPushButton[role="nav"] {{
+    background: transparent; border: none; border-radius: 9px; padding: 9px 14px;
+    text-align: left; color: {MUTED}; font-size: 14px;
+}}
+QPushButton[role="nav"]:hover {{ background: {RAISED}; color: {TEXT}; }}
+QPushButton[role="nav"]:checked {{ background: rgba(139, 92, 246, 0.20); color: {TEXT}; font-weight: 600; }}
+QLabel[role="section"] {{
+    color: {MUTED}; font-size: 11px; font-weight: 600; letter-spacing: 1.5px; padding: 4px 14px;
+}}
+QLabel[role="rowtitle"] {{ font-size: 19px; font-weight: 600; }}
+QToolButton[role="navbtn"] {{
+    background: {RAISED}; border: 1px solid {BORDER}; border-radius: 17px; font-size: 20px;
+    padding-bottom: 3px;
+}}
+QToolButton[role="navbtn"]:hover {{ border-color: {ACCENT}; }}
+QToolButton[role="navbtn"]:disabled {{ color: {BORDER}; background: transparent; }}
+QToolButton[role="rowarrow"] {{
+    background: rgba(13, 10, 20, 0.86); border: 1px solid {ACCENT}; border-radius: 20px;
+    font-size: 24px; padding-bottom: 4px; color: {TEXT};
+}}
+QToolButton[role="rowarrow"]:hover {{ background: {ACCENT}; }}
+QLineEdit[role="search"] {{ border-radius: 18px; padding: 7px 16px; background: {BG}; }}
+
 QFrame[role="card"] {{
     background: {SURFACE}; border: 1px solid {BORDER}; border-radius: {RADIUS}px;
 }}

@@ -234,6 +234,10 @@ def _range_test(client: JellyfinClient, item: Item, r: Report) -> None:
     label = f"{item.series_name + ' ' if item.series_name else ''}{item.episode_label} {item.name}".strip()
     r.line(f"item: {label}" + (f" ({source.container}, {len(source.streams)} streams)" if source else ""))
     r.line(f"url: {client.url(path, params)}")
+    if source and not source.streams:
+        keys = ", ".join(sorted(source.raw.keys())[:25])
+        r.info(f"no stream list in the item response (needed for the track pickers later); "
+               f"MediaSource keys: {keys}")
     try:
         with client.open("GET", path, params, headers={"Range": f"bytes=0-{RANGE_BYTES - 1}"},
                          timeout=15) as resp:

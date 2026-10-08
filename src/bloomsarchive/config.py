@@ -61,6 +61,9 @@ DEFAULTS: dict[str, Any] = {
         "resume_rewind_seconds": 5,
         "played_threshold_pct": 90,
     },
+    "window": {
+        "hyprland_float": True,     # float the main window wide and centred on Hyprland
+    },
     "library_state": {},   # per-library sort/filter
     "series_tracks": {},   # per-series audio/subtitle memory
     "tokens": {},          # fallback token store when keyring is unavailable

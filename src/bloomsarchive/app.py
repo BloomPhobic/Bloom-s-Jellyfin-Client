@@ -8,12 +8,13 @@
 from __future__ import annotations
 
 import logging
+import time
 
-from PySide6.QtCore import QObject, QTimer, Signal
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QGuiApplication, QIcon
 from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget
 
-from . import APP_ID, APP_NAME
+from . import APP_ID, APP_NAME, wm
 from .api.models import User
 from .session import Session
 from .ui import theme
@@ -36,15 +37,15 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.session = session
         self.setWindowTitle(APP_NAME)
-        self.resize(1280, 800)
-        self.setMinimumSize(720, 560)
+        self.setMinimumSize(900, 560)
+        self._size_wide()
 
         self.images = ImageLoader(session, parent=self)
         self.stack = QStackedWidget()
         self.setCentralWidget(self.stack)
         self.startup = StartupScreen(session)
         self.login = LoginScreen(session, self.images)
-        self.shell = Shell(session)
+        self.shell = Shell(session, self.images)
         for w in (self.startup, self.login, self.shell):
             self.stack.addWidget(w)
 
@@ -56,6 +57,51 @@ class MainWindow(QMainWindow):
         self.bridge = SessionBridge(self)
         self.bridge.unauthorized.connect(self._session_ended)
         session.client.on_unauthorized = self._on_unauthorized_worker
+        QApplication.instance().installEventFilter(self)
+
+    # ------------------------------------------------------------------ window shape
+    def _size_wide(self) -> None:
+        """16:9, ~80% of the screen. Honoured by stacking WMs; tiling ones see make_wide()."""
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            self.resize(1600, 900)
+            return
+        g = screen.availableGeometry()
+        w = int(min(g.width() * 0.8, g.height() * 0.86 * 16 / 9))
+        self.resize(w, int(w * 9 / 16))
+
+    def make_wide(self) -> None:
+        if not (wm.is_hyprland() and self.session.settings.get("window.hyprland_float", True)):
+            return
+
+        def work() -> str:
+            msg = ""
+            for _ in range(8):           # the window may not be mapped yet
+                msg = wm.make_window_wide(APP_ID)
+                if msg != "own window not found":
+                    break
+                time.sleep(0.15)
+            return msg
+
+        run_async(work, lambda msg: log.info("hyprland: %s", msg))
+
+    # ------------------------------------------------------------------ mouse back/forward
+    def eventFilter(self, obj, ev) -> bool:
+        if ev.type() != QEvent.Type.MouseButtonPress:
+            return False
+        try:
+            active = self.isActiveWindow() and self.stack.currentWidget() is self.shell
+        except RuntimeError:       # during teardown
+            return False
+        if active:
+            b = ev.button()
+            if b == Qt.MouseButton.BackButton:
+                self.shell.nav.back()
+                return True
+            if b == Qt.MouseButton.ForwardButton:
+                self.shell.nav.forward()
+                return True
+        return False
 
     # ------------------------------------------------------------------ flow
     def _on_ready(self, user: User | None) -> None:
@@ -106,4 +152,5 @@ def run_app(argv: list[str]) -> int:
     win = MainWindow(session)
     win.show()
     QTimer.singleShot(0, win.startup.start)
+    QTimer.singleShot(120, win.make_wide)
     return app.exec()

@@ -8,8 +8,9 @@ A desktop client for [Jellyfin](https://jellyfin.org) media servers. Browse with
 |---|---|---|
 | 1 | Skeleton, config, theme, API client, discovery, auth, `--selfcheck` | done |
 | 2 | Login screen (profiles, password, manual login, Quick Connect), switch user, log out | done |
-| 3 | Home page with all rows | next |
-| 4–9 | Library grid, details, mpv player, Lua UI, skip/up-next, settings | to do |
+| 3 | Shell (sidebar, back/forward, search box), home page with all rows, wide window on Hyprland | done |
+| 4 | Library grid with sort, filters, lazy loading; played/favourite toggles everywhere | next |
+| 5–9 | Details, mpv player, Lua UI, skip/up-next, settings | to do |
 
 Phase 1 also includes the segment fetcher (`player/segments.py`) because `--selfcheck` reports which skip-intro source your server has.
 
@@ -87,6 +88,18 @@ Startup finds the server (last working address first, then a background re-probe
 - **Quick Connect** — shows a 6-digit code; approve it from any signed-in Jellyfin session (profile menu → Quick Connect). Expires after 5 minutes.
 - **Manual login** — for users hidden from the profile list.
 - *Switch user* keeps your token; *Log out* revokes it on the server. If the server ever rejects your token, you're sent back to sign in.
+
+## Home and navigation
+
+- **Rows:** Libraries, Continue Watching, Next Up, Recently Added (one per library; Collections/playlists skipped), Watch History, Favourites. Each loads independently; empty rows hide.
+- **Cards:** progress bar on in-progress items, a tick on watched ones, an unwatched-count badge on series, a heart on favourites.
+- **Right-click a card** to mark watched/unwatched or (un)favourite. The card updates at once and reverts if the server refuses.
+- **Scrolling a row:** the ‹ › arrows on hover, Shift+wheel, or a sideways trackpad swipe. Plain wheel scrolls the page.
+- **Keys:** Alt+← / Alt+→ or the mouse back/forward buttons, F5 refresh, Ctrl+F search.
+
+### Window shape on Hyprland
+
+Tiling gives a new window whatever slot the layout has, often a tall column. On Hyprland the app floats itself at 16:9 (about 80% of the monitor) and centres itself, using `hyprctl`. To keep it tiled instead, set `"window": {"hyprland_float": false}` in `settings.json`. If you add your own window rule that floats it wide, the app leaves it alone.
 
 ## Files
 

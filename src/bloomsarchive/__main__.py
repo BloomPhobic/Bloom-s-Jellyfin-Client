@@ -9,10 +9,17 @@ import sys
 _DASHES = "\u2010\u2011\u2012\u2013\u2014\u2015\u2212"
 
 
+_INVISIBLE = "\u00a0\u2007\u202f\u200b\u200c\u200d\u2060\ufeff"
+
+
 def _normalize_dashes(argv: list[str]) -> list[str]:
-    """Flags pasted from rendered chat/markdown can arrive as typographic dashes."""
+    """Commands pasted from rendered chat/markdown can carry typographic dashes and
+    invisible characters (non-breaking or zero-width spaces). Clean both."""
     out = []
     for a in argv:
+        a = a.strip(_INVISIBLE + " \t")
+        if not a:
+            continue
         i = 0
         while i < len(a) and a[i] in _DASHES + "-":
             i += 1

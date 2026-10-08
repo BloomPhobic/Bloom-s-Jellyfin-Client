@@ -77,7 +77,7 @@ class Compat(IsolatedTest):
         srv = self.serve(version="10.10.7", route_style="new")
         c = self.login(srv)
         views = c.compat.call("views")
-        self.assertEqual([v["Name"] for v in views["Items"]], ["Movies", "Anime"])
+        self.assertEqual([v["Name"] for v in views["Items"]], ["Movies", "Anime", "Collections"])
         self.assertEqual(c.compat.choices()["views"], "new")
 
     def test_fallback_to_legacy_and_cache(self):

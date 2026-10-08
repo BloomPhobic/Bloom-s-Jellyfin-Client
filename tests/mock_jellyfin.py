@@ -69,8 +69,12 @@ def _media_source(item_id: str) -> dict:
 
 def build_library() -> tuple[list[dict], dict[str, dict]]:
     views = [
-        {"Id": "view-movies", "Name": "Movies", "Type": "CollectionFolder", "CollectionType": "movies"},
-        {"Id": "view-anime", "Name": "Anime", "Type": "CollectionFolder", "CollectionType": "tvshows"},
+        {"Id": "view-movies", "Name": "Movies", "Type": "CollectionFolder", "CollectionType": "movies",
+         "ImageTags": {"Primary": "tag-view-movies"}},
+        {"Id": "view-anime", "Name": "Anime", "Type": "CollectionFolder", "CollectionType": "tvshows",
+         "ImageTags": {"Primary": "tag-view-anime"}},
+        {"Id": "view-collections", "Name": "Collections", "Type": "CollectionFolder",
+         "CollectionType": "boxsets", "ImageTags": {}},
     ]
     items: dict[str, dict] = {}
 
@@ -92,6 +96,7 @@ def build_library() -> tuple[list[dict], dict[str, dict]]:
         eid = f"ep-{n}"
         add({"Id": eid, "Name": f"Episode {n}", "Type": "Episode", "ParentId": "season-1",
              "SeriesId": "series-1", "SeriesName": "Test Anime", "SeasonId": "season-1",
+             "SeriesPrimaryImageTag": "tag-series-1",
              "IndexNumber": n, "ParentIndexNumber": 1, "RunTimeTicks": _ticks(1440),
              "DateCreated": f"2026-02-0{n + 1}T00:00:00Z",
              "Chapters": [
@@ -101,6 +106,12 @@ def build_library() -> tuple[list[dict], dict[str, dict]]:
                  {"Name": "Ending", "StartPositionTicks": _ticks(1320)},
              ],
              "MediaSources": [_media_source(eid)]})
+    # Some viewing history: ep-1 half watched, the movie watched, the series a favourite.
+    items["ep-1"]["UserData"].update({"PlaybackPositionTicks": _ticks(600), "PlayedPercentage": 41.6,
+                                      "LastPlayedDate": "2026-10-05T20:00:00Z"})
+    items["movie-1"]["UserData"].update({"Played": True, "PlayCount": 1,
+                                         "LastPlayedDate": "2026-10-04T21:00:00Z"})
+    items["series-1"]["UserData"]["IsFavorite"] = True
     return views, items
 
 
@@ -309,7 +320,9 @@ class Handler(BaseHTTPRequestHandler):
         if want("/Items", r"/Users/([^/]+)/Items"):
             return self._send(200, self._query_items(q))
         if path == "/Shows/NextUp":
-            nxt = [i for i in st.items.values() if i["Type"] == "Episode" and not i["UserData"]["Played"]][:1]
+            nxt = [i for i in st.items.values() if i["Type"] == "Episode" and not i["UserData"]["Played"]
+                   and (q.get("enableResumable", "true").lower() == "true"
+                        or not i["UserData"]["PlaybackPositionTicks"])][:1]
             return self._send(200, {"Items": nxt, "TotalRecordCount": len(nxt)})
 
         for new_prefix, legacy_word, key in (("/UserPlayedItems/", "PlayedItems", "Played"),
@@ -386,10 +399,15 @@ class Handler(BaseHTTPRequestHandler):
         if q.get("nameStartsWith"):
             items = [i for i in items if i["Name"].lower().startswith(q["nameStartsWith"].lower())]
         key = (q.get("sortBy") or "SortName").split(",")[0]
+        if key == "DatePlayed":
+            items.sort(key=lambda i: i["UserData"].get("LastPlayedDate") or "",
+                       reverse=(q.get("sortOrder") == "Descending"))
+            key = "_keep"
         field_map = {"SortName": "Name", "Name": "Name", "DateCreated": "DateCreated",
                      "PremiereDate": "PremiereDate", "ProductionYear": "ProductionYear"}
-        f = field_map.get(key, "Name")
-        items.sort(key=lambda i: str(i.get(f, "")), reverse=(q.get("sortOrder") == "Descending"))
+        if key != "_keep":
+            f = field_map.get(key, "Name")
+            items.sort(key=lambda i: str(i.get(f, "")), reverse=(q.get("sortOrder") == "Descending"))
         total = len(items)
         start = int(q.get("startIndex", 0))
         limit = int(q.get("limit", total or 1))

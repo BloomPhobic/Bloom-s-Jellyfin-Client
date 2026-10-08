@@ -6,6 +6,7 @@ import unittest
 
 from helpers import IsolatedTest
 
+from bloomsarchive import __version__
 from bloomsarchive.api.client import auth_header, encode_params, is_private_host, normalize_base_url
 from bloomsarchive.api.compat import parse_version
 from bloomsarchive.api.models import Item, seconds_to_ticks, ticks_to_seconds
@@ -31,7 +32,7 @@ class AuthHeader(unittest.TestCase):
     def test_format(self):
         h = auth_header("cachy", "dev123", token="tok")
         self.assertEqual(h, 'MediaBrowser Client="Bloom\'s Archive", Device="cachy", '
-                            'DeviceId="dev123", Version="0.1.0", Token="tok"')
+                            f'DeviceId="dev123", Version="{__version__}", Token="tok"')
 
     def test_no_token_and_sanitised(self):
         h = auth_header('evil",Token="x', "d")

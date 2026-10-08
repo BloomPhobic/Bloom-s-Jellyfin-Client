@@ -89,7 +89,7 @@ class SelfCheck(IsolatedTest):
         print(text)
         self.assertEqual(code, 0, text)
         for needle in ("pinned ServerId ours", "Quick Connect enabled", "2 public user(s)",
-                       "libraries via /UserViews: Movies, Anime", "media-segments: works",
+                       "libraries via /UserViews: Movies, Anime, Collections", "media-segments: works",
                        "byte-range direct play works: 206, 65536 bytes", "All checks passed"):
             self.assertIn(needle, text)
         self.assertEqual(self.settings.get("server_id"), "ours")

@@ -70,6 +70,7 @@ class UserData:
     played_percentage: float | None = None
     play_count: int = 0
     unplayed_item_count: int | None = None
+    last_played_date: str | None = None
     raw: dict = field(default_factory=dict, repr=False)
 
     @property
@@ -86,6 +87,7 @@ class UserData:
             played_percentage=d.get("PlayedPercentage"),
             play_count=int(_g(d, "PlayCount", 0)),
             unplayed_item_count=d.get("UnplayedItemCount"),
+            last_played_date=d.get("LastPlayedDate"),
             raw=d,
         )
 
@@ -181,7 +183,16 @@ class Item:
     user_data: UserData = field(default_factory=UserData)
     media_sources: list[MediaSource] = field(default_factory=list)
     chapters: list[dict] = field(default_factory=list)
+    parent_id: str | None = None
+    date_created: str | None = None
+    child_count: int | None = None
+    series_primary_image_tag: str | None = None
+    primary_image_aspect_ratio: float | None = None
     raw: dict = field(default_factory=dict, repr=False)
+
+    @property
+    def is_folder_like(self) -> bool:
+        return self.type in ("Series", "Season", "BoxSet", "CollectionFolder", "Folder", "UserView")
 
     @property
     def runtime_seconds(self) -> float:
@@ -228,6 +239,11 @@ class Item:
             user_data=UserData.from_json(d.get("UserData")),
             media_sources=[MediaSource.from_json(s) for s in _g(d, "MediaSources", [])],
             chapters=list(_g(d, "Chapters", [])),
+            parent_id=d.get("ParentId"),
+            date_created=d.get("DateCreated"),
+            child_count=d.get("ChildCount"),
+            series_primary_image_tag=d.get("SeriesPrimaryImageTag"),
+            primary_image_aspect_ratio=d.get("PrimaryImageAspectRatio"),
             raw=d,
         )
 
