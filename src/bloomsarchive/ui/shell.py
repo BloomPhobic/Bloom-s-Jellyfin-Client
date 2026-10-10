@@ -1,6 +1,5 @@
 """The signed-in shell: top bar (back/forward, search, user menu), sidebar, and
-the page stack. Home is real; library, details, favourites, search and
-settings are placeholders until their phases.
+the page stack. Details (phase 5) and Settings (phase 9) are placeholders.
 """
 from __future__ import annotations
 
@@ -10,15 +9,21 @@ from PySide6.QtWidgets import (QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineE
                                QPushButton, QToolButton, QVBoxLayout, QWidget)
 
 from .. import APP_NAME
+from ..api import browse
+from ..api.browse import LibraryQuery
 from ..api.models import Item, User
 from ..display import card_text
 from ..session import Session
+from .actions import ItemActions
 from .home import HomePage
+from .library import LibraryPage
+from .search import SearchPage
 from .nav import NavStack, Page, PlaceholderPage
 from .widgets.image_loader import ImageLoader
 from .widgets.toast import Toast
 
 SIDEBAR_WIDTH = 224
+UNSUPPORTED_LIBRARIES = {"music", "books", "photos", "livetv", "playlists", "homevideos", "musicvideos"}
 
 
 def _nav_button(text: str, key: str) -> QPushButton:
@@ -55,14 +60,16 @@ class Shell(QWidget):
         body.addWidget(self.nav, 1)
         root.addLayout(body, 1)
 
-        self.home = HomePage(session, loader)
+        self.actions = ItemActions(session, self)
+        self.toast = Toast(self)
+        self.actions.toast.connect(self.toast.show_message)
+        self.actions.open_requested.connect(self.open_item)
+
+        self.home = HomePage(session, loader, self.actions)
         self.home.open_item.connect(self.open_item)
         self.home.open_view.connect(self.open_view)
         self.home.views_loaded.connect(self._set_views)
         self.nav.changed.connect(self._nav_changed)
-
-        self.toast = Toast(self)
-        self.home.toast.connect(self.toast.show_message)
 
         for seq, fn in ((QKeySequence.StandardKey.Back, self.nav.back),
                         (QKeySequence.StandardKey.Forward, self.nav.forward),
@@ -105,6 +112,7 @@ class Shell(QWidget):
         self.search.setClearButtonEnabled(True)
         self.search.setFixedWidth(380)
         self.search.returnPressed.connect(self._search)
+        self.search.textEdited.connect(self._search_typed)
         h.addWidget(self.search)
         h.addStretch(1)
 
@@ -207,29 +215,64 @@ class Shell(QWidget):
             self.home.load(initial=False)
 
     def open_view(self, view: Item) -> None:
-        self.nav.push(PlaceholderPage(
-            view.name, "The library grid — sorting, filters, letter jump — arrives in phase 4.",
-            nav_key=f"view:{view.id}"))
+        cur = self.nav.current
+        key = f"view:{view.id}"
+        if isinstance(cur, LibraryPage) and cur.nav_key == key:
+            return
+        ct = (view.collection_type or "").lower()
+        if ct in UNSUPPORTED_LIBRARIES:
+            self.nav.push(PlaceholderPage(view.name, f"{ct.title()} libraries aren't supported here.",
+                                          nav_key=key))
+            return
+        q = LibraryQuery(view.id, browse.types_for(view.collection_type))
+        self._push_library(view.name, q, key, state_key=view.id)
 
     def open_item(self, item: Item) -> None:
+        if item.type in ("BoxSet", "Folder", "CollectionFolder", "UserView"):
+            if item.type in ("CollectionFolder", "UserView"):
+                self.open_view(item)
+                return
+            q = LibraryQuery(item.id, "Movie,Series")
+            self._push_library(item.name, q, nav_key="", state_key=f"collection:{item.id}")
+            return
         title, sub = card_text(item)
         heading = f"{title} — {sub}" if sub and item.type == "Episode" else title
         self.nav.push(PlaceholderPage(
             heading, f"{item.type} details, track pickers and Play arrive in phase 5."))
 
+    def _push_library(self, title: str, q: LibraryQuery, nav_key: str, state_key: str | None,
+                      show_fav: bool = True) -> None:
+        page = LibraryPage(self.session, self.loader, self.actions, title, q, nav_key, state_key,
+                           show_favourites_filter=show_fav)
+        page.open_item.connect(self.open_item)
+        self.nav.push(page)
+
     def _open_favourites(self) -> None:
-        self.nav.push(PlaceholderPage(
-            "Favourites", "A full favourites grid arrives in phase 4 — they're also on Home for now.",
-            nav_key="favourites"))
+        if isinstance(self.nav.current, LibraryPage) and self.nav.current.nav_key == "favourites":
+            return
+        q = LibraryQuery(None, "Movie,Series,Episode", fixed_filters=["IsFavorite"])
+        self._push_library("Favourites", q, "favourites", state_key="favourites", show_fav=False)
 
     def _open_settings(self) -> None:
         self.nav.push(PlaceholderPage("Settings", "Settings arrive in phase 9.", nav_key="settings"))
 
+    def _search_page(self) -> SearchPage:
+        cur = self.nav.current
+        if isinstance(cur, SearchPage):
+            return cur
+        page = SearchPage(self.session, self.loader, self.actions)
+        page.open_item.connect(self.open_item)
+        self.nav.push(page)
+        return page
+
+    def _search_typed(self, text: str) -> None:
+        if text.strip() or isinstance(self.nav.current, SearchPage):
+            self._search_page().set_term(text)
+
     def _search(self) -> None:
         q = self.search.text().strip()
         if q:
-            self.nav.push(PlaceholderPage(f"Search: {q}", "Search results arrive in phase 4.",
-                                          nav_key="search"))
+            self._search_page().set_term(q)
 
     def _focus_search(self) -> None:
         self.search.setFocus()

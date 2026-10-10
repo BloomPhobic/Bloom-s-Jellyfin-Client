@@ -10,7 +10,7 @@ from collections import OrderedDict
 from enum import Enum
 
 from PySide6.QtCore import (QAbstractListModel, QEasingCurve, QModelIndex, QPersistentModelIndex,
-                            QPoint, QPropertyAnimation, QRectF, QSize, Qt, Signal)
+                            QPoint, QPointF, QPropertyAnimation, QRectF, QSize, Qt, Signal)
 from PySide6.QtGui import (QBrush, QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen,
                            QPixmap)
 from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QListView, QStyle,
@@ -22,6 +22,8 @@ from ...api.models import Item
 from ...display import card_text, progress_fraction, unplayed_badge
 from .. import theme
 from .image_loader import ImageLoader
+from .smooth import SmoothScroller, is_touchpad
+from .smooth import install as smooth_install
 
 log = logging.getLogger(__name__)
 
@@ -142,6 +144,33 @@ class CardDelegate(QStyledItemDelegate):
     def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:
         return self.style.size()
 
+    # -- geometry (shared by paint and hit-testing)
+    def image_rect(self, cell) -> QRectF:
+        """The card image, centred horizontally in its cell (grid cells can be wider)."""
+        st = self.style
+        x0 = cell.x() + (cell.width() - st.width) / 2
+        return QRectF(x0, cell.y() + PAD, st.width, st.image_height)
+
+    def icon_rects(self, cell) -> tuple[QRectF, QRectF] | None:
+        """(watched, favourite) hover buttons at the image's bottom-right, or None."""
+        if self.style is CardStyle.LIBRARY:
+            return None
+        img = self.image_rect(cell)
+        size, gap, margin = 30.0, 6.0, 8.0
+        fav = QRectF(img.right() - margin - size, img.bottom() - margin - size - 6, size, size)
+        played = QRectF(fav.left() - gap - size, fav.top(), size, size)
+        return played, fav
+
+    def hit_icon(self, cell, pos) -> str | None:
+        rects = self.icon_rects(cell)
+        if not rects:
+            return None
+        if rects[0].contains(pos):
+            return "played"
+        if rects[1].contains(pos):
+            return "favorite"
+        return None
+
     # -- helpers
     def _cover(self, pm: QPixmap, w: int, h: int, dpr: float) -> QPixmap:
         """Scale-to-fill + centre-crop, cached per size."""
@@ -169,6 +198,29 @@ class CardDelegate(QStyledItemDelegate):
         f.setBold(bold)
         return f
 
+    def _draw_icon_button(self, p: QPainter, r: QRectF, kind: str, on: bool) -> None:
+        p.save()
+        p.setPen(QPen(QColor(theme.ACCENT_HOVER if on else theme.BORDER), 1))
+        p.setBrush(QColor(theme.ACCENT) if (on and kind == "played") else QColor(13, 10, 20, 215))
+        p.drawEllipse(r)
+        cx, cy = r.center().x(), r.center().y()
+        if kind == "played":
+            p.setPen(QPen(QColor(theme.TEXT if on else theme.MUTED), 2.2, Qt.PenStyle.SolidLine,
+                          Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            path = QPainterPath()
+            path.moveTo(cx - 6, cy + 0.5)
+            path.lineTo(cx - 2, cy + 4.5)
+            path.lineTo(cx + 6, cy - 4.5)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawPath(path)
+        else:
+            p.setPen(QColor("#f472b6" if on else theme.MUTED))
+            f = QFont(p.font())
+            f.setPixelSize(16)
+            p.setFont(f)
+            p.drawText(r, int(Qt.AlignmentFlag.AlignCenter), "♥" if on else "♡")
+        p.restore()
+
     # -- paint
     def paint(self, p: QPainter, option: QStyleOptionViewItem, index) -> None:
         p.save()
@@ -183,10 +235,9 @@ class CardDelegate(QStyledItemDelegate):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         st = self.style
-        r = option.rect
-        x0, y0 = r.x() + PAD, r.y() + PAD
+        img = self.image_rect(option.rect)
+        x0, y0 = img.x(), img.y()
         w, ih = st.width, st.image_height
-        img = QRectF(x0, y0, w, ih)
         item: Item | None = index.data(ItemRole)
 
         if item is None:                                   # skeleton
@@ -286,6 +337,12 @@ class CardDelegate(QStyledItemDelegate):
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRoundedRect(img.adjusted(1, 1, -1, -1), RADIUS, RADIUS)
 
+        # ---- hover buttons: watched / favourite
+        rects = self.icon_rects(option.rect) if hover else None
+        if rects:
+            self._draw_icon_button(p, rects[0], "played", item.user_data.played)
+            self._draw_icon_button(p, rects[1], "favorite", item.user_data.is_favorite)
+
         # ---- text below
         if st.has_text:
             tr = QRectF(x0, y0 + st.image_height + 8, w, 20)
@@ -303,24 +360,22 @@ class CardDelegate(QStyledItemDelegate):
 
 # =========================================================================== views
 
-class CardListView(QListView):
-    """A single horizontal row of cards."""
+class CardViewBase(QListView):
+    """Shared setup: painted cards, hover, click, right-click, hover ✓/♥ buttons."""
 
     item_clicked = Signal(object)              # Item
     item_menu = Signal(object, QPoint)         # Item, global position
+    toggle_played = Signal(object)             # Item
+    toggle_favorite = Signal(object)           # Item
 
-    def __init__(self, model: ItemListModel, delegate: CardDelegate, parent=None):
+    def __init__(self, model: QAbstractListModel, delegate: "CardDelegate", parent=None):
         super().__init__(parent)
+        self.card_delegate = delegate
         self.setModel(model)
         self.setItemDelegate(delegate)
-        self.setFlow(QListView.Flow.LeftToRight)
-        self.setWrapping(False)
         self.setUniformItemSizes(True)
-        self.setSpacing(0)
         self.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -330,8 +385,6 @@ class CardListView(QListView):
         self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFrameShape(QListView.Shape.NoFrame)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.horizontalScrollBar().setSingleStep(48)
-        self.setFixedHeight(model.style.size().height() + 2)
         self.clicked.connect(self._on_click)
         self.customContextMenuRequested.connect(self._on_menu)
 
@@ -349,21 +402,100 @@ class CardListView(QListView):
         if item is not None:
             self.item_menu.emit(item, self.viewport().mapToGlobal(pos))
 
-    def wheelEvent(self, e) -> None:
-        d = e.angleDelta()
-        sideways = abs(d.x()) > abs(d.y())
-        shift = bool(e.modifiers() & Qt.KeyboardModifier.ShiftModifier)
-        if sideways or shift:
-            delta = d.x() if sideways else d.y()
-            sb = self.horizontalScrollBar()
-            sb.setValue(sb.value() - int(delta))
-            e.accept()
-        else:
-            e.ignore()       # let the page scroll vertically
+    def _icon_hit(self, pos: QPoint) -> tuple[Item, str] | None:
+        idx = self.indexAt(pos)
+        item = idx.data(ItemRole) if idx.isValid() else None
+        if item is None:
+            return None
+        kind = self.card_delegate.hit_icon(self.visualRect(idx), QPointF(pos))
+        return (item, kind) if kind else None
+
+    def mousePressEvent(self, e) -> None:
+        if e.button() == Qt.MouseButton.LeftButton and self._icon_hit(e.position().toPoint()):
+            e.accept()          # handled on release; don't start a click on the card
+            return
+        super().mousePressEvent(e)
+
+    def mouseReleaseEvent(self, e) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            hit = self._icon_hit(e.position().toPoint())
+            if hit:
+                item, kind = hit
+                (self.toggle_played if kind == "played" else self.toggle_favorite).emit(item)
+                e.accept()
+                return
+        super().mouseReleaseEvent(e)
 
     def leaveEvent(self, e) -> None:
         self.viewport().update()
         super().leaveEvent(e)
+
+
+class CardListView(CardViewBase):
+    """A single horizontal row of cards."""
+
+    def __init__(self, model: ItemListModel, delegate: "CardDelegate", parent=None):
+        super().__init__(model, delegate, parent)
+        self.setFlow(QListView.Flow.LeftToRight)
+        self.setWrapping(False)
+        self.setSpacing(0)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.horizontalScrollBar().setSingleStep(48)
+        self.setFixedHeight(model.style.size().height() + 2)
+        self.smooth = SmoothScroller(self.horizontalScrollBar(), parent=self)
+
+    def wheelEvent(self, e) -> None:
+        d = e.angleDelta()
+        sideways = abs(d.x()) > abs(d.y())
+        shift = bool(e.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        if sideways and is_touchpad(e):            # trackpad swipe: follow the finger
+            sb = self.horizontalScrollBar()
+            px = e.pixelDelta().x() or d.x()
+            sb.setValue(sb.value() - int(px))
+            e.accept()
+        elif sideways or shift:                     # tilt wheel / Shift+wheel: animate
+            delta = d.x() if sideways else d.y()
+            self.smooth.scroll_by(-delta / 120 * 260)
+            e.accept()
+        else:
+            e.ignore()       # let the page scroll vertically
+
+
+class CardGridView(CardViewBase):
+    """A wrapping, virtualised poster grid whose columns stretch to fill the width."""
+
+    def __init__(self, model: QAbstractListModel, delegate: "CardDelegate", parent=None):
+        super().__init__(model, delegate, parent)
+        self.setViewMode(QListView.ViewMode.IconMode)
+        self.setFlow(QListView.Flow.LeftToRight)
+        self.setWrapping(True)
+        self.setResizeMode(QListView.ResizeMode.Adjust)
+        self.setMovement(QListView.Movement.Static)
+        self.setSpacing(0)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.verticalScrollBar().setSingleStep(60)
+        self.smooth = smooth_install(self)
+        self._fit_grid()
+
+    def _fit_grid(self) -> None:
+        card = self.card_delegate.style.size()
+        avail = max(card.width(), self.viewport().width() - 2)
+        cols = max(1, avail // card.width())
+        self.setGridSize(QSize(avail // cols, card.height() + 6))
+
+    def resizeEvent(self, e) -> None:
+        super().resizeEvent(e)
+        self._fit_grid()
+
+    def scroll_to_row(self, row: int) -> None:
+        model = self.model()
+        if model is None or row >= model.rowCount():
+            return
+        rect = self.visualRect(model.index(row, 0))
+        target = self.verticalScrollBar().value() + rect.top()
+        self.smooth.vertical.scroll_to(max(0, min(target, self.verticalScrollBar().maximum())))
 
 
 class CardRow(QWidget):
@@ -371,6 +503,8 @@ class CardRow(QWidget):
 
     item_clicked = Signal(object)
     item_menu = Signal(object, QPoint)
+    toggle_played = Signal(object)
+    toggle_favorite = Signal(object)
 
     def __init__(self, title: str, style: CardStyle, loader: ImageLoader, parent=None):
         super().__init__(parent)
@@ -379,6 +513,8 @@ class CardRow(QWidget):
         self.view = CardListView(self.model, self.delegate)
         self.view.item_clicked.connect(self.item_clicked)
         self.view.item_menu.connect(self.item_menu)
+        self.view.toggle_played.connect(self.toggle_played)
+        self.view.toggle_favorite.connect(self.toggle_favorite)
 
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0)

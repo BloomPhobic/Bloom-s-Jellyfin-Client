@@ -50,3 +50,7 @@ def uninstall() -> bool:
         path.unlink()
         return True
     return False
+
+
+if __name__ == "__main__":      # python -m bloomsarchive.desktop
+    print(f"installed {install()}")

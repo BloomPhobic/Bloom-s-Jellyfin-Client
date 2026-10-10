@@ -2,9 +2,8 @@
 Watch History and Favourites.
 
 Each row loads in its own worker and appears as soon as its data arrives
-(skeleton cards until then). Empty rows hide themselves. Right-click toggles
-played/favourite with an optimistic update that is reverted if the server
-says no.
+(skeleton cards until then). Empty rows hide themselves. Watched/favourite
+toggles go through ItemActions, shared with every other page.
 """
 from __future__ import annotations
 
@@ -12,14 +11,15 @@ import logging
 import time
 from typing import Callable
 
-from PySide6.QtCore import QPoint, Qt, QTimer, Signal
-from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMenu, QPushButton, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
 from ..api import library
 from ..api.models import Item
 from ..session import Session
+from .actions import ItemActions
 from .nav import Page
+from .widgets import smooth
 from .widgets.cards import CardRow, CardStyle
 from .widgets.image_loader import ImageLoader
 from .workers import run_async
@@ -37,12 +37,13 @@ class HomePage(Page):
     open_item = Signal(object)        # Item
     open_view = Signal(object)        # library Item
     views_loaded = Signal(list)       # list[Item]
-    toast = Signal(str, bool)         # message, is_error
 
-    def __init__(self, session: Session, loader: ImageLoader, parent=None):
+    def __init__(self, session: Session, loader: ImageLoader, actions: ItemActions, parent=None):
         super().__init__(parent)
         self.session = session
         self.loader = loader
+        self.actions = actions
+        self._stale = False
         self.setObjectName("root")
         self._gen = 0
         self._loaded_at = 0.0
@@ -63,6 +64,7 @@ class HomePage(Page):
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll.verticalScrollBar().setSingleStep(40)
         outer.addWidget(self.scroll)
+        self._smooth = smooth.install(self.scroll)
 
         content = QWidget()
         content.setObjectName("root")
@@ -85,13 +87,18 @@ class HomePage(Page):
         self.row_favs = self._row("Favourites", CardStyle.POSTER)
         self.col.addStretch()
 
+        actions.item_changed.connect(self._apply_everywhere)
+        actions.data_changed.connect(self._server_changed)
+
     # ------------------------------------------------------------------ building
     def _row(self, title: str, style: CardStyle, box: QVBoxLayout | None = None,
              wire: bool = True) -> CardRow:
         row = CardRow(title, style, self.loader)
         if wire:
             row.item_clicked.connect(self.open_item)
-            row.item_menu.connect(self._show_menu)
+            row.item_menu.connect(lambda item, pos: self.actions.context_menu(item, pos, self))
+            row.toggle_played.connect(self.actions.toggle_played)
+            row.toggle_favorite.connect(self.actions.toggle_favorite)
         (box or self.col).addWidget(row)
         return row
 
@@ -129,14 +136,22 @@ class HomePage(Page):
     def page_shown(self) -> None:
         if not self._loaded_at:
             self.load(initial=True)
-        elif time.monotonic() - self._loaded_at > STALE_AFTER:
+        elif self._stale or time.monotonic() - self._loaded_at > STALE_AFTER:
             self.load(initial=False)
+
+    def _server_changed(self) -> None:
+        """Something was toggled somewhere: reshuffle rows now if visible, else on return."""
+        if self.isVisible():
+            self.refresh_soon()
+        else:
+            self._stale = True
 
     def refresh_soon(self) -> None:
         """Debounced refresh, e.g. after toggles or playback."""
         self._refresh_timer.start()
 
     def load(self, initial: bool = True) -> None:
+        self._stale = False
         self._gen += 1
         gen = self._gen
         self._loaded_at = time.monotonic()
@@ -207,70 +222,7 @@ class HomePage(Page):
                 row.set_title(f"Recently Added in {v.name}")
             self._fetch(gen, row, lambda vid=v.id: library.latest(c, vid))
 
-    # ------------------------------------------------------------------ played / favourite
-    def _show_menu(self, item: Item, pos: QPoint) -> None:
-        menu = QMenu(self)
-        ud = item.user_data
-        open_act = QAction("Open", menu)
-        open_act.triggered.connect(lambda: self.open_item.emit(item))
-        played = QAction("Mark as unwatched" if ud.played else "Mark as watched", menu)
-        played.triggered.connect(lambda: self.toggle_played(item))
-        fav = QAction("Remove from Favourites" if ud.is_favorite else "Add to Favourites", menu)
-        fav.triggered.connect(lambda: self.toggle_favorite(item))
-        menu.addAction(open_act)
-        menu.addSeparator()
-        menu.addAction(played)
-        menu.addAction(fav)
-        menu.exec(pos)
-
+    # ------------------------------------------------------------------ toggles (via ItemActions)
     def _apply_everywhere(self, item_id: str, fn: Callable[[Item], None]) -> None:
         for row in self._all_rows():
             row.model.update_where(item_id, fn)
-
-    def toggle_played(self, item: Item) -> None:
-        new = not item.user_data.played
-        old_pos = item.user_data.playback_position_ticks
-        old_pct = item.user_data.played_percentage
-
-        def apply(it: Item) -> None:
-            it.user_data.played = new
-            if new:
-                it.user_data.playback_position_ticks = 0
-                it.user_data.played_percentage = None
-
-        def revert(it: Item) -> None:
-            it.user_data.played = not new
-            it.user_data.playback_position_ticks = old_pos
-            it.user_data.played_percentage = old_pct
-
-        self._optimistic(item, apply, revert,
-                         lambda: library.set_played(self.session.client, item.id, new),
-                         f"Marked “{item.name}” as {'watched' if new else 'unwatched'}")
-
-    def toggle_favorite(self, item: Item) -> None:
-        new = not item.user_data.is_favorite
-
-        def apply(it: Item) -> None:
-            it.user_data.is_favorite = new
-
-        def revert(it: Item) -> None:
-            it.user_data.is_favorite = not new
-
-        self._optimistic(item, apply, revert,
-                         lambda: library.set_favorite(self.session.client, item.id, new),
-                         f"{'Added' if new else 'Removed'} “{item.name}” "
-                         f"{'to' if new else 'from'} Favourites")
-
-    def _optimistic(self, item: Item, apply: Callable[[Item], None], revert: Callable[[Item], None],
-                    call: Callable[[], object], ok_text: str) -> None:
-        self._apply_everywhere(item.id, apply)
-
-        def done(_r: object) -> None:
-            self.toast.emit(ok_text, False)
-            self.refresh_soon()     # rows like Continue Watching may need to reshuffle
-
-        def failed(e: Exception) -> None:
-            self._apply_everywhere(item.id, revert)
-            self.toast.emit(f"Couldn't update “{item.name}”: {e}", True)
-
-        run_async(call, done, failed)

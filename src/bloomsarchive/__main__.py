@@ -6,28 +6,29 @@ import logging
 import sys
 
 
-_DASHES = "\u2010\u2011\u2012\u2013\u2014\u2015\u2212"
-
-
-_INVISIBLE = "\u00a0\u2007\u202f\u200b\u200c\u200d\u2060\ufeff"
+_DASHES = "\u2010\u2011\u2012\u2013\u2014\u2015\u2212\ufe63\uff0d"
+_INVISIBLE = "\u00a0\u00ad\u2007\u202f\u200b\u200c\u200d\u2060\ufeff"
 
 
 def _normalize_dashes(argv: list[str]) -> list[str]:
-    """Commands pasted from rendered chat/markdown can carry typographic dashes and
-    invisible characters (non-breaking or zero-width spaces). Clean both."""
+    """Commands pasted from rendered chat/markdown can carry typographic dashes
+    (also *inside* a flag, e.g. a non-breaking hyphen in install-desktop) and
+    invisible characters. Clean both, for flags only."""
     out = []
     for a in argv:
-        a = a.strip(_INVISIBLE + " \t")
+        a = "".join(ch for ch in a if ch not in _INVISIBLE).strip()
         if not a:
             continue
-        i = 0
-        while i < len(a) and a[i] in _DASHES + "-":
-            i += 1
-        lead = a[:i]
-        if lead and any(c in _DASHES for c in lead):
-            # an em/en dash stands for "--"; hyphen-like singles count as one "-"
+        if a[0] in _DASHES + "-":
+            i = 0
+            while i < len(a) and a[i] in _DASHES + "-":
+                i += 1
+            lead, rest = a[:i], a[i:]
             n = sum(2 if c in "\u2013\u2014" else 1 for c in lead)
-            a = "-" * min(n, 2) + a[i:]
+            name, eq, value = rest.partition("=")
+            for d in _DASHES:
+                name = name.replace(d, "-")
+            a = "-" * min(n, 2) + name + eq + value
         out.append(a)
     return out
 
@@ -40,7 +41,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--install-desktop", action="store_true", help="add a launcher entry (and fix the portal app-id warning)")
     p.add_argument("--uninstall-desktop", action="store_true", help="remove the launcher entry")
     p.add_argument("--debug", action="store_true", help="verbose logging")
-    args = p.parse_args(_normalize_dashes(sys.argv[1:] if argv is None else argv))
+    clean = _normalize_dashes(sys.argv[1:] if argv is None else argv)
+    args, extra = p.parse_known_args(clean)
+    if extra:
+        shown = ", ".join(ascii(x) for x in extra)
+        p.error(f"unrecognized arguments: {shown} (shown with escapes so hidden characters are visible)")
 
     if args.install_desktop or args.uninstall_desktop:
         from . import desktop

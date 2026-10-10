@@ -42,6 +42,7 @@ class MockConfig:
     qc_auto_approve_after: int | None = None   # approve after N polls (None: wait for /Authorize)
     segments: str = "media-segments"   # media-segments | intro-skipper | chapters | none
     honor_range: bool = True
+    extra_movies: int = 0              # generate a bigger movie library for paging tests
 
 
 def _ticks(sec: float) -> int:
@@ -67,7 +68,12 @@ def _media_source(item_id: str) -> dict:
     }
 
 
-def build_library() -> tuple[list[dict], dict[str, dict]]:
+_WORDS = ["Alpha", "Bravo", "Comet", "Delta", "Echo", "Falcon", "Garden", "Harbor", "Island", "Jade",
+          "Kite", "Lantern", "Meadow", "Nova", "Orchid", "Prism", "Quartz", "River", "Sakura", "Tide",
+          "Umbra", "Violet", "Willow", "Xenon", "Yonder", "Zephyr"]
+
+
+def build_library(extra_movies: int = 0) -> tuple[list[dict], dict[str, dict]]:
     views = [
         {"Id": "view-movies", "Name": "Movies", "Type": "CollectionFolder", "CollectionType": "movies",
          "ImageTags": {"Primary": "tag-view-movies"}},
@@ -106,6 +112,15 @@ def build_library() -> tuple[list[dict], dict[str, dict]]:
                  {"Name": "Ending", "StartPositionTicks": _ticks(1320)},
              ],
              "MediaSources": [_media_source(eid)]})
+    for i in range(extra_movies):
+        add({"Id": f"gen-{i:04d}", "Name": f"{_WORDS[i % 26]} {i:04d}", "Type": "Movie",
+             "ParentId": "view-movies", "ProductionYear": 1990 + i % 30,
+             "Genres": [["Action", "Drama", "Comedy"][i % 3]], "CommunityRating": (i % 10) + 0.5,
+             "DateCreated": f"2025-{1 + i % 12:02d}-{1 + i % 28:02d}T00:00:00Z", "RunTimeTicks": _ticks(5000 + i)})
+    if extra_movies:
+        add({"Id": "gen-digit", "Name": "2001 Numbers", "Type": "Movie", "ParentId": "view-movies",
+             "ProductionYear": 2001, "Genres": ["Drama"], "DateCreated": "2025-01-01T00:00:00Z"})
+
     # Some viewing history: ep-1 half watched, the movie watched, the series a favourite.
     items["ep-1"]["UserData"].update({"PlaybackPositionTicks": _ticks(600), "PlayedPercentage": 41.6,
                                       "LastPlayedDate": "2026-10-05T20:00:00Z"})
@@ -128,7 +143,7 @@ class MockState:
         self.hidden_users = [{"Id": "user-hidden", "Name": "Hidden", "HasPassword": True, "_pw": "secret"}]
         self.tokens: dict[str, str] = {}
         self.qc: dict[str, dict] = {}     # secret -> {code, approved_by, polls}
-        self.views, self.items = build_library()
+        self.views, self.items = build_library(cfg.extra_movies)
         self.reports: list[tuple[str, dict]] = []   # playback reports
 
     def all_users(self):
@@ -319,6 +334,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, res[: int(q.get("limit", 20))])
         if want("/Items", r"/Users/([^/]+)/Items"):
             return self._send(200, self._query_items(q))
+        if path == "/Items/Filters2":
+            pool = [i for i in st.items.values()
+                    if (not q.get("parentId") or self._under(i, q["parentId"]))
+                    and (not q.get("includeItemTypes") or i["Type"] in q["includeItemTypes"].split(","))]
+            genres = sorted({g for i in pool for g in i.get("Genres", [])})
+            years = sorted({i["ProductionYear"] for i in pool if i.get("ProductionYear")})
+            return self._send(200, {"Genres": [{"Name": g, "Id": g.lower()} for g in genres],
+                                    "Years": years, "Tags": [], "OfficialRatings": []})
         if path == "/Shows/NextUp":
             nxt = [i for i in st.items.values() if i["Type"] == "Episode" and not i["UserData"]["Played"]
                    and (q.get("enableResumable", "true").lower() == "true"
@@ -396,9 +419,21 @@ class Handler(BaseHTTPRequestHandler):
             items = [i for i in items if i["UserData"]["IsFavorite"]]
         if q.get("searchTerm"):
             items = [i for i in items if q["searchTerm"].lower() in i["Name"].lower()]
+        if q.get("genres"):
+            want = set(q["genres"].split("|"))
+            items = [i for i in items if want & set(i.get("Genres", []))]
+        if q.get("years"):
+            yrs = {int(y) for y in q["years"].split(",")}
+            items = [i for i in items if i.get("ProductionYear") in yrs]
+        if q.get("nameLessThan"):
+            items = [i for i in items if i["Name"].casefold() < q["nameLessThan"].casefold()]
         if q.get("nameStartsWith"):
             items = [i for i in items if i["Name"].lower().startswith(q["nameStartsWith"].lower())]
         key = (q.get("sortBy") or "SortName").split(",")[0]
+        if key == "Random":
+            import random
+            random.shuffle(items)
+            key = "_keep"
         if key == "DatePlayed":
             items.sort(key=lambda i: i["UserData"].get("LastPlayedDate") or "",
                        reverse=(q.get("sortOrder") == "Descending"))
@@ -407,7 +442,7 @@ class Handler(BaseHTTPRequestHandler):
                      "PremiereDate": "PremiereDate", "ProductionYear": "ProductionYear"}
         if key != "_keep":
             f = field_map.get(key, "Name")
-            items.sort(key=lambda i: str(i.get(f, "")), reverse=(q.get("sortOrder") == "Descending"))
+            items.sort(key=lambda i: str(i.get(f, "")).casefold(), reverse=(q.get("sortOrder") == "Descending"))
         total = len(items)
         start = int(q.get("startIndex", 0))
         limit = int(q.get("limit", total or 1))
@@ -478,8 +513,10 @@ if __name__ == "__main__":
     ap.add_argument("--version", default="10.10.7")
     ap.add_argument("--legacy", action="store_true", help="only legacy /Users/{id}/... routes")
     ap.add_argument("--server-id", default="mockserver0000000000000000000000")
+    ap.add_argument("--extra-movies", type=int, default=300, help="size of the generated movie library")
     a = ap.parse_args()
-    cfg = MockConfig(server_id=a.server_id, version=a.version, route_style="legacy" if a.legacy else "auto")
+    cfg = MockConfig(server_id=a.server_id, version=a.version, route_style="legacy" if a.legacy else "auto",
+                     extra_movies=a.extra_movies)
     srv = MockJellyfin(cfg, port=a.port, host=a.host).start()
     print(f"mock Jellyfin {cfg.version} at {srv.url}  (users: Alice/hunter2, Guest/blank)")
     try:

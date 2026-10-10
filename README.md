@@ -9,8 +9,9 @@ A desktop client for [Jellyfin](https://jellyfin.org) media servers. Browse with
 | 1 | Skeleton, config, theme, API client, discovery, auth, `--selfcheck` | done |
 | 2 | Login screen (profiles, password, manual login, Quick Connect), switch user, log out | done |
 | 3 | Shell (sidebar, back/forward, search box), home page with all rows, wide window on Hyprland | done |
-| 4 | Library grid with sort, filters, lazy loading; played/favourite toggles everywhere | next |
-| 5–9 | Details, mpv player, Lua UI, skip/up-next, settings | to do |
+| 4 | Library grid (sort, filters, A–Z jump, lazy paging), Favourites, live search, hover ✓/♥, smooth scrolling | done |
+| 5 | Detail pages, track pickers, seasons and episodes | next |
+| 6–9 | mpv player, Lua UI, skip/up-next, settings | to do |
 
 Phase 1 also includes the segment fetcher (`player/segments.py`) because `--selfcheck` reports which skip-intro source your server has.
 
@@ -23,6 +24,7 @@ python -m venv --system-site-packages .venv
 source .venv/bin/activate.fish        # fish; bash/zsh: source .venv/bin/activate
 pip install -e .
 bloomsarchive --install-desktop       # launcher entry; also fixes the portal app-id warning
+#   (or, with no flags to mistype:  python -m bloomsarchive.desktop)
 ```
 
 Other distributions: install mpv and PySide6 6.5 or newer from your package manager (or `pip install PySide6` inside the venv).
@@ -96,6 +98,17 @@ Startup finds the server (last working address first, then a background re-probe
 - **Right-click a card** to mark watched/unwatched or (un)favourite. The card updates at once and reverts if the server refuses.
 - **Scrolling a row:** the ‹ › arrows on hover, Shift+wheel, or a sideways trackpad swipe. Plain wheel scrolls the page.
 - **Keys:** Alt+← / Alt+→ or the mouse back/forward buttons, F5 refresh, Ctrl+F search.
+
+## Libraries, Favourites, Search
+
+- **Grid:** one poster per title (series only in TV/Anime libraries). It loads 60 at a time as you scroll, so big libraries stay fast; the scrollbar is right from the start.
+- **Sort:** Name, Date added, Release date, Rating, Date played, Runtime, Random — each reversible (the order button reshuffles Random).
+- **Filters:** All / Unwatched / Watched, Favourites, Genres and Years (pick several; years are grouped by decade). *Clear filters* resets them.
+- **A–Z bar:** jumps to the first title under a letter; available when sorted by Name, and it respects your filters.
+- Sort and filters are remembered per library. Collections open as their own grid.
+- **Hover a poster** for ✓ (watched) and ♥ (favourite) buttons; right-click works too.
+- **Search** updates as you type (from two characters): Movies, Shows and Episodes rows.
+- **Smooth scrolling:** mouse-wheel notches glide instead of jumping; touchpads keep their native feel.
 
 ### Window shape on Hyprland
 

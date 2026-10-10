@@ -76,6 +76,23 @@ QToolButton[role="rowarrow"] {{
     font-size: 24px; padding-bottom: 4px; color: {TEXT};
 }}
 QToolButton[role="rowarrow"]:hover {{ background: {ACCENT}; }}
+QToolButton[role="filter"], QPushButton[role="chip"] {{
+    background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 10px; padding: 7px 14px;
+}}
+QToolButton[role="filter"]:hover, QPushButton[role="chip"]:hover {{ border-color: {ACCENT}; }}
+QToolButton[role="filter"][active="true"], QPushButton[role="chip"]:checked {{
+    background: rgba(139, 92, 246, 0.22); border-color: {ACCENT}; color: {TEXT};
+}}
+QToolButton[role="filter"]::menu-indicator {{ image: none; width: 0; }}
+QToolButton[role="letter"] {{
+    background: transparent; border: none; border-radius: 6px; color: {MUTED};
+    font-size: 11px; font-weight: 600; padding: 0;
+}}
+QToolButton[role="letter"]:hover {{ background: {RAISED}; color: {ACCENT_HOVER}; }}
+QToolButton[role="letter"]:disabled {{ color: {BORDER}; }}
+QComboBox {{ min-width: 120px; }}
+QMenu::item:checked {{ color: {ACCENT_HOVER}; font-weight: 600; }}
+QMenu::indicator {{ width: 14px; height: 14px; }}
 QLineEdit[role="search"] {{ border-radius: 18px; padding: 7px 16px; background: {BG}; }}
 
 QFrame[role="card"] {{
