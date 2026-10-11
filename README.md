@@ -10,8 +10,9 @@ A desktop client for [Jellyfin](https://jellyfin.org) media servers. Browse with
 | 2 | Login screen (profiles, password, manual login, Quick Connect), switch user, log out | done |
 | 3 | Shell (sidebar, back/forward, search box), home page with all rows, wide window on Hyprland | done |
 | 4 | Library grid (sort, filters, A–Z jump, lazy paging), Favourites, live search, hover ✓/♥, smooth scrolling | done |
-| 5 | Detail pages, track pickers, seasons and episodes | next |
-| 6–9 | mpv player, Lua UI, skip/up-next, settings | to do |
+| 5 | Detail pages, track pickers, seasons and episodes | done |
+| 6 | mpv playback: launch, IPC, resume, progress reporting | next |
+| 7–9 | In-player buttons, skip intro / up next, settings | to do |
 
 Phase 1 also includes the segment fetcher (`player/segments.py`) because `--selfcheck` reports which skip-intro source your server has.
 
@@ -106,9 +107,18 @@ Startup finds the server (last working address first, then a background re-probe
 - **Filters:** All / Unwatched / Watched, Favourites, Genres and Years (pick several; years are grouped by decade). *Clear filters* resets them.
 - **A–Z bar:** jumps to the first title under a letter; available when sorted by Name, and it respects your filters.
 - Sort and filters are remembered per library. Collections open as their own grid.
-- **Hover a poster** for ✓ (watched) and ♥ (favourite) buttons; right-click works too.
+- **Hover a poster** for ✓ (watched) and ♥ (favourite) buttons — they glow when pointed at, say what they'll do, and pop when clicked. Right-click works too.
+- **Years** filter: pick one or several years (newest or oldest first); sort by **Year** for a year-ordered grid.
 - **Search** updates as you type (from two characters): Movies, Shows and Episodes rows.
 - **Smooth scrolling:** mouse-wheel notches glide instead of jumping; touchpads keep their native feel.
+
+## Detail pages
+
+- **Movies and episodes:** backdrop, poster or still, year/runtime/rating, genres, tagline, overview, director and cast; **Play / Resume from mm:ss**, **Start over**, **Watched**, **Favourite**.
+- **Pickers:** Version (when there's more than one file), Audio and Subtitles. Defaults: what you chose last time for that series, then your preferred languages (`languages` in settings.json; Japanese audio + English subtitles by default), then the file's own flags. Dubbed audio in a language you read gets forced/signs subtitles only.
+- **Series:** opens on the season of your Next Up episode. The Play button plays that episode. Each episode row has a thumbnail with progress, a ▶ on hover, and a watched toggle.
+- If a server leaves stream lists out of item responses, the app asks `PlaybackInfo` with transcoding and stream-copy disabled; it's information only and never starts a transcode.
+- Until phase 6, Play shows a message describing exactly what would play.
 
 ### Window shape on Hyprland
 

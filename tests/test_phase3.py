@@ -123,5 +123,5 @@ class Display(unittest.TestCase):
         self.assertEqual(progress_fraction(mv), 0.0, "finished items show a tick, not a bar")
         sr = Item.from_json({"Id": "s", "Type": "Series", "Name": "Frieren", "PremiereDate": "2023-09-29",
                              "UserData": {"UnplayedItemCount": 140}})
-        self.assertEqual(card_text(sr), ("Frieren", "2023 · 140 unwatched"))
+        self.assertEqual(card_text(sr), ("Frieren", "140 ep unwatched | 2023"))
         self.assertEqual(unplayed_badge(sr), "99+")

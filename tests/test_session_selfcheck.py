@@ -12,7 +12,7 @@ def no_transcode_requests(srv):
     bad = [r for r in srv.log
            if "m3u8" in r.path or (r.path.startswith("/Videos/") and "/stream" in r.path
                                    and r.query.get("static") != ["true"])
-           or r.path.endswith("/PlaybackInfo")]
+           or (r.path.endswith("/PlaybackInfo") and (r.body or {}).get("EnableTranscoding", True))]
     return bad
 
 

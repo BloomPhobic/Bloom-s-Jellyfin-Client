@@ -19,6 +19,7 @@ SORTS: dict[str, tuple[str, str]] = {
     # key: (label, Jellyfin sortBy)
     "name": ("Name", "SortName"),
     "added": ("Date added", "DateCreated,SortName"),
+    "year": ("Year", "ProductionYear,PremiereDate,SortName"),
     "premiere": ("Release date", "PremiereDate,SortName"),
     "rating": ("Rating", "CommunityRating,SortName"),
     "played": ("Date played", "DatePlayed,SortName"),
@@ -26,7 +27,7 @@ SORTS: dict[str, tuple[str, str]] = {
     "random": ("Random", "Random"),
 }
 # Sensible direction when the user picks a sort (they can flip it).
-DEFAULT_DESC = {"added", "premiere", "rating", "played"}
+DEFAULT_DESC = {"added", "year", "premiere", "rating", "played"}
 
 LETTERS = ["#"] + list(string.ascii_uppercase)
 
@@ -165,16 +166,28 @@ class FilterOptions:
 
 
 def filter_options(client: JellyfinClient, q: LibraryQuery) -> FilterOptions:
+    """Genres from /Items/Filters2, years from /Items/Filters.
+
+    Filters2 (the newer endpoint) has genres and tags but no years; the older
+    /Items/Filters still lists years, so we ask both.
+    """
     params = {"userId": client.user_id, "parentId": q.parent_id, "includeItemTypes": q.include_types,
               "recursive": True}
+    genres: list[str] = []
+    years: list[int] = []
     try:
         data = client.get("/Items/Filters2", **params) or {}
         genres = [g.get("Name", "") for g in data.get("Genres", []) if isinstance(g, dict)]
-        years = [int(y) for y in data.get("Years", []) if str(y).isdigit()] if "Years" in data else []
-    except HttpError:
-        data = client.get("/Items/Filters", **params) or {}       # pre-10.x shape
-        genres = [g for g in data.get("Genres", []) if isinstance(g, str)]
         years = [int(y) for y in data.get("Years", []) if str(y).isdigit()]
+    except HttpError:
+        pass
+    if not years or not genres:
+        try:
+            legacy = client.get("/Items/Filters", **params) or {}
+            years = years or [int(y) for y in legacy.get("Years", []) if str(y).isdigit()]
+            genres = genres or [g for g in legacy.get("Genres", []) if isinstance(g, str)]
+        except HttpError:
+            pass
     return FilterOptions(sorted({g for g in genres if g}, key=str.casefold),
                          sorted(set(years), reverse=True))
 

@@ -29,6 +29,7 @@ class LoggedRequest:
     query: dict
     headers: dict
     status: int = 0
+    body: dict | None = None
 
 
 @dataclass
@@ -43,6 +44,8 @@ class MockConfig:
     segments: str = "media-segments"   # media-segments | intro-skipper | chapters | none
     honor_range: bool = True
     extra_movies: int = 0              # generate a bigger movie library for paging tests
+    second_season: bool = False        # add Season 2 (two episodes) to the test series
+    streams_in_detail: bool = True     # False: item responses omit MediaStreams (seen on real servers)
 
 
 def _ticks(sec: float) -> int:
@@ -73,7 +76,7 @@ _WORDS = ["Alpha", "Bravo", "Comet", "Delta", "Echo", "Falcon", "Garden", "Harbo
           "Umbra", "Violet", "Willow", "Xenon", "Yonder", "Zephyr"]
 
 
-def build_library(extra_movies: int = 0) -> tuple[list[dict], dict[str, dict]]:
+def build_library(extra_movies: int = 0, second_season: bool = False) -> tuple[list[dict], dict[str, dict]]:
     views = [
         {"Id": "view-movies", "Name": "Movies", "Type": "CollectionFolder", "CollectionType": "movies",
          "ImageTags": {"Primary": "tag-view-movies"}},
@@ -112,6 +115,20 @@ def build_library(extra_movies: int = 0) -> tuple[list[dict], dict[str, dict]]:
                  {"Name": "Ending", "StartPositionTicks": _ticks(1320)},
              ],
              "MediaSources": [_media_source(eid)]})
+    if second_season:
+        add({"Id": "season-2", "Name": "Season 2", "Type": "Season", "ParentId": "series-1",
+             "SeriesId": "series-1", "IndexNumber": 2})
+        for n in range(1, 3):
+            eid = f"s2-ep-{n}"
+            add({"Id": eid, "Name": f"Second {n}", "Type": "Episode", "ParentId": "season-2",
+                 "SeriesId": "series-1", "SeriesName": "Test Anime", "SeasonId": "season-2",
+                 "SeriesPrimaryImageTag": "tag-series-1", "IndexNumber": n, "ParentIndexNumber": 2,
+                 "RunTimeTicks": _ticks(1440), "DateCreated": "2025-12-01T00:00:00Z",
+                 "MediaSources": [_media_source(eid)]})
+    items["movie-1"].update({"People": [{"Name": "Satoshi Kon", "Type": "Director"},
+                                        {"Name": "Junko Iwao", "Type": "Actor"}],
+                             "BackdropImageTags": ["bd-movie-1"], "OfficialRating": "R",
+                             "CommunityRating": 8.1})
     for i in range(extra_movies):
         add({"Id": f"gen-{i:04d}", "Name": f"{_WORDS[i % 26]} {i:04d}", "Type": "Movie",
              "ParentId": "view-movies", "ProductionYear": 1990 + i % 30,
@@ -143,7 +160,7 @@ class MockState:
         self.hidden_users = [{"Id": "user-hidden", "Name": "Hidden", "HasPassword": True, "_pw": "secret"}]
         self.tokens: dict[str, str] = {}
         self.qc: dict[str, dict] = {}     # secret -> {code, approved_by, polls}
-        self.views, self.items = build_library(cfg.extra_movies)
+        self.views, self.items = build_library(cfg.extra_movies, cfg.second_season)
         self.reports: list[tuple[str, dict]] = []   # playback reports
 
     def all_users(self):
@@ -194,13 +211,19 @@ class Handler(BaseHTTPRequestHandler):
         self._status = status
 
     def _body(self) -> dict:
+        if hasattr(self, "_parsed_body"):
+            return self._parsed_body
         n = int(self.headers.get("Content-Length") or 0)
-        if not n:
-            return {}
-        try:
-            return json.loads(self.rfile.read(n))
-        except ValueError:
-            return {}
+        body = {}
+        if n:
+            try:
+                body = json.loads(self.rfile.read(n))
+            except ValueError:
+                body = {}
+        self._parsed_body = body
+        if getattr(self, "_entry", None) is not None:
+            self._entry.body = body
+        return body
 
     def _token(self) -> str | None:
         h = self.headers.get("Authorization") or self.headers.get("X-Emby-Authorization") or ""
@@ -222,6 +245,9 @@ class Handler(BaseHTTPRequestHandler):
         split = urlsplit(self.path)
         query = {k: v for k, v in parse_qs(split.query).items()}
         entry = LoggedRequest(self.command, split.path, query, dict(self.headers))
+        self._entry = entry
+        if hasattr(self, "_parsed_body"):
+            del self._parsed_body
         with self.state.lock:
             self.state.log.append(entry)
         if self.state.cfg.delay:
@@ -339,11 +365,42 @@ class Handler(BaseHTTPRequestHandler):
                     if (not q.get("parentId") or self._under(i, q["parentId"]))
                     and (not q.get("includeItemTypes") or i["Type"] in q["includeItemTypes"].split(","))]
             genres = sorted({g for i in pool for g in i.get("Genres", [])})
-            years = sorted({i["ProductionYear"] for i in pool if i.get("ProductionYear")})
-            return self._send(200, {"Genres": [{"Name": g, "Id": g.lower()} for g in genres],
-                                    "Years": years, "Tags": [], "OfficialRatings": []})
+            # Like real Jellyfin: Filters2 has no Years; the legacy endpoint does.
+            return self._send(200, {"Genres": [{"Name": g, "Id": g.lower()} for g in genres], "Tags": []})
+        if path == "/Items/Filters":
+            pool = [i for i in st.items.values()
+                    if (not q.get("parentId") or self._under(i, q["parentId"]))
+                    and (not q.get("includeItemTypes") or i["Type"] in q["includeItemTypes"].split(","))]
+            return self._send(200, {"Genres": sorted({g for i in pool for g in i.get("Genres", [])}),
+                                    "Years": sorted({i["ProductionYear"] for i in pool if i.get("ProductionYear")}),
+                                    "Tags": [], "OfficialRatings": []})
+        mm = m(r"/Shows/([^/]+)/Seasons")
+        if mm:
+            seasons = [dict(i) for i in st.items.values() if i["Type"] == "Season" and i.get("SeriesId") == mm.group(1)]
+            for sn in seasons:
+                eps = [e for e in st.items.values() if e["Type"] == "Episode" and e.get("SeasonId") == sn["Id"]]
+                sn["UserData"] = {**sn["UserData"],
+                                  "UnplayedItemCount": sum(1 for e in eps if not e["UserData"]["Played"])}
+            seasons.sort(key=lambda x: x.get("IndexNumber", 0))
+            return self._send(200, {"Items": seasons, "TotalRecordCount": len(seasons)})
+        mm = m(r"/Shows/([^/]+)/Episodes")
+        if mm:
+            eps = [e for e in st.items.values() if e["Type"] == "Episode" and e.get("SeriesId") == mm.group(1)
+                   and (not q.get("seasonId") or e.get("SeasonId") == q["seasonId"])]
+            eps.sort(key=lambda e: (e.get("ParentIndexNumber", 0), e.get("IndexNumber", 0)))
+            return self._send(200, {"Items": [self._maybe_strip(e) for e in eps], "TotalRecordCount": len(eps)})
+        mm = m(r"/Items/([^/]+)/PlaybackInfo")
+        if mm and method == "POST":
+            body = self._body()
+            it = st.items.get(mm.group(1))
+            if not it:
+                return self._send(404)
+            if body.get("EnableTranscoding", True):
+                return self._send(400, b"mock: PlaybackInfo must disable transcoding", "text/plain")
+            return self._send(200, {"MediaSources": it.get("MediaSources", []), "PlaySessionId": uuid.uuid4().hex})
         if path == "/Shows/NextUp":
             nxt = [i for i in st.items.values() if i["Type"] == "Episode" and not i["UserData"]["Played"]
+                   and (not q.get("seriesId") or i.get("SeriesId") == q["seriesId"])
                    and (q.get("enableResumable", "true").lower() == "true"
                         or not i["UserData"]["PlaybackPositionTicks"])][:1]
             return self._send(200, {"Items": nxt, "TotalRecordCount": len(nxt)})
@@ -368,7 +425,7 @@ class Handler(BaseHTTPRequestHandler):
         iid = mm.group(1) if mm else (lm.group(2) if lm and lm.group(1) == uid else None)
         if iid is not None:
             it = st.items.get(iid) or next((v for v in st.views if v["Id"] == iid), None)
-            return self._send(200, it) if it else self._send(404)
+            return self._send(200, self._maybe_strip(it)) if it else self._send(404)
 
         # --- segments
         mm = m(r"/MediaSegments/([^/]+)")
@@ -391,6 +448,13 @@ class Handler(BaseHTTPRequestHandler):
         self._send(404)
 
     # ------------------------------------------------------------------ helpers
+    def _maybe_strip(self, it: dict) -> dict:
+        if self.state.cfg.streams_in_detail or not it.get("MediaSources"):
+            return it
+        out = dict(it)
+        out["MediaSources"] = [{k: v for k, v in ms.items() if k != "MediaStreams"} for ms in it["MediaSources"]]
+        return out
+
     def _under(self, item: dict, parent_id: str) -> bool:
         seen = 0
         while item and seen < 10:

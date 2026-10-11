@@ -10,11 +10,13 @@ from PySide6.QtWidgets import (QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineE
 
 from .. import APP_NAME
 from ..api import browse
+from ..api import tracks
 from ..api.browse import LibraryQuery
+from ..api.tracks import PlayRequest
 from ..api.models import Item, User
-from ..display import card_text
 from ..session import Session
 from .actions import ItemActions
+from .detail import DetailPage
 from .home import HomePage
 from .library import LibraryPage
 from .search import SearchPage
@@ -235,10 +237,38 @@ class Shell(QWidget):
             q = LibraryQuery(item.id, "Movie,Series")
             self._push_library(item.name, q, nav_key="", state_key=f"collection:{item.id}")
             return
-        title, sub = card_text(item)
-        heading = f"{title} — {sub}" if sub and item.type == "Episode" else title
-        self.nav.push(PlaceholderPage(
-            heading, f"{item.type} details, track pickers and Play arrive in phase 5."))
+        season_id = None
+        if item.type == "Season" and item.series_id:
+            season_id = item.id
+            item = Item.from_json({"Id": item.series_id, "Name": item.series_name or item.name,
+                                   "Type": "Series"})
+        cur = self.nav.current
+        if isinstance(cur, DetailPage) and cur.item.id == item.id and season_id is None:
+            return
+        page = DetailPage(self.session, self.loader, self.actions, item, season_id=season_id)
+        page.open_item.connect(self.open_item)
+        page.play.connect(self.play_requested)
+        self.nav.push(page)
+
+    def play_requested(self, req: PlayRequest) -> None:
+        """Phase 6 hands this to mpv. For now, show exactly what would play."""
+        it = req.item
+        what = f"{it.series_name} {it.episode_label}" if it.type == "Episode" else it.name
+        bits = [f"from {int(req.start_seconds // 60)}:{int(req.start_seconds % 60):02d}"
+                if req.start_seconds else "from the start"]
+        src = next((s for s in it.media_sources if s.id == req.source_id), None)
+        if src is not None and req.audio_index is not None:
+            a = next((x for x in src.audio_streams if x.index == req.audio_index), None)
+            if a:
+                bits.append(f"audio {tracks.language_name(a.language)}")
+        if req.subtitle_index is not None:
+            if req.subtitle_index == tracks.OFF:
+                bits.append("subtitles off")
+            elif src is not None:
+                st = next((x for x in src.subtitle_streams if x.index == req.subtitle_index), None)
+                if st:
+                    bits.append(f"subtitles {tracks.language_name(st.language)}")
+        self.toast.show_message(f"▶ {what} — {', '.join(bits)}. Playback arrives in phase 6.", ms=4500)
 
     def _push_library(self, title: str, q: LibraryQuery, nav_key: str, state_key: str | None,
                       show_fav: bool = True) -> None:

@@ -25,8 +25,9 @@ def card_text(item: Item) -> tuple[str, str]:
         return item.name, ""
     if t == "Series":
         unplayed = item.user_data.unplayed_item_count or 0
-        bits = [b for b in (year_of(item), f"{unplayed} unwatched" if unplayed and not item.user_data.played else "") if b]
-        return item.name, " · ".join(bits)
+        bits = [f"{unplayed} ep unwatched" if unplayed and not item.user_data.played else "",
+                year_of(item)]
+        return item.name, " | ".join(b for b in bits if b)
     return item.name, year_of(item)
 
 

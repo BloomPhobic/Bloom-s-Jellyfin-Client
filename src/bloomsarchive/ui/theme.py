@@ -91,6 +91,22 @@ QToolButton[role="letter"] {{
 QToolButton[role="letter"]:hover {{ background: {RAISED}; color: {ACCENT_HOVER}; }}
 QToolButton[role="letter"]:disabled {{ color: {BORDER}; }}
 QComboBox {{ min-width: 120px; }}
+QLabel[role="detailtitle"] {{ font-size: 36px; font-weight: 700; }}
+QLabel[role="tag"] {{
+    background: rgba(139, 92, 246, 0.16); border: 1px solid rgba(167, 139, 250, 0.35);
+    border-radius: 10px; padding: 3px 10px; font-size: 12px; color: {TEXT};
+}}
+QLabel[role="tagline"] {{ font-style: italic; color: {ACCENT_HOVER}; font-size: 15px; }}
+QLabel[role="overview"] {{ font-size: 15px; color: #d9d3ec; }}
+QLabel[role="fieldlabel"] {{ color: {MUTED}; font-size: 12px; font-weight: 600; letter-spacing: 0.5px; }}
+QPushButton[role="toggle"] {{
+    background: rgba(31, 23, 48, 0.85); border: 1px solid {BORDER}; border-radius: 10px;
+    padding: 12px 18px; font-size: 15px;
+}}
+QPushButton[role="toggle"]:hover {{ border-color: {ACCENT_HOVER}; }}
+QPushButton[role="toggle"]:checked {{ background: rgba(139, 92, 246, 0.28); border-color: {ACCENT}; }}
+QFrame[role="popup"] {{ background: {RAISED}; border: 1px solid {ACCENT}; border-radius: 12px; }}
+QFrame[role="popup"] QPushButton[role="chip"] {{ padding: 6px 10px; }}
 QMenu::item:checked {{ color: {ACCENT_HOVER}; font-weight: 600; }}
 QMenu::indicator {{ width: 14px; height: 14px; }}
 QLineEdit[role="search"] {{ border-radius: 18px; padding: 7px 16px; background: {BG}; }}

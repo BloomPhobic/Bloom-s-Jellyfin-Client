@@ -6,11 +6,12 @@ of hundreds stay cheap. Images load lazily, only when a card is painted.
 from __future__ import annotations
 
 import logging
+import time
 from collections import OrderedDict
 from enum import Enum
 
 from PySide6.QtCore import (QAbstractListModel, QEasingCurve, QModelIndex, QPersistentModelIndex,
-                            QPoint, QPointF, QPropertyAnimation, QRectF, QSize, Qt, Signal)
+                            QPoint, QPointF, QPropertyAnimation, QRectF, QSize, Qt, QTimer, Signal)
 from PySide6.QtGui import (QBrush, QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen,
                            QPixmap)
 from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QListView, QStyle,
@@ -31,6 +32,7 @@ ItemRole = Qt.ItemDataRole.UserRole + 1
 KeyRole = Qt.ItemDataRole.UserRole + 2
 
 PAD = 7          # room around each card for the hover zoom
+PULSE_SECONDS = 0.45
 TEXT_H = 46
 RADIUS = 10
 
@@ -140,6 +142,8 @@ class CardDelegate(QStyledItemDelegate):
         self.style = style
         self.loader = loader
         self._scaled: OrderedDict[tuple, QPixmap] = OrderedDict()
+        self.hot: tuple[str, str] | None = None            # (item id, "played"|"favorite") under the mouse
+        self.pulses: dict[tuple[str, str], float] = {}     # toggle animations: key -> start time
 
     def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:
         return self.style.size()
@@ -156,7 +160,7 @@ class CardDelegate(QStyledItemDelegate):
         if self.style is CardStyle.LIBRARY:
             return None
         img = self.image_rect(cell)
-        size, gap, margin = 30.0, 6.0, 8.0
+        size, gap, margin = 34.0, 7.0, 9.0
         fav = QRectF(img.right() - margin - size, img.bottom() - margin - size - 6, size, size)
         played = QRectF(fav.left() - gap - size, fav.top(), size, size)
         return played, fav
@@ -198,27 +202,93 @@ class CardDelegate(QStyledItemDelegate):
         f.setBold(bold)
         return f
 
-    def _draw_icon_button(self, p: QPainter, r: QRectF, kind: str, on: bool) -> None:
+    @staticmethod
+    def _heart(cx: float, cy: float, sz: float) -> QPainterPath:
+        h = QPainterPath()
+        h.moveTo(cx, cy + sz * 0.42)
+        h.cubicTo(cx - sz * 1.05, cy - sz * 0.2, cx - sz * 0.5, cy - sz * 1.0, cx, cy - sz * 0.38)
+        h.cubicTo(cx + sz * 0.5, cy - sz * 1.0, cx + sz * 1.05, cy - sz * 0.2, cx, cy + sz * 0.42)
+        h.closeSubpath()
+        return h
+
+    def _draw_icon_button(self, p: QPainter, r: QRectF, kind: str, on: bool, hot: bool,
+                          pulse: float | None) -> None:
         p.save()
-        p.setPen(QPen(QColor(theme.ACCENT_HOVER if on else theme.BORDER), 1))
-        p.setBrush(QColor(theme.ACCENT) if (on and kind == "played") else QColor(13, 10, 20, 215))
-        p.drawEllipse(r)
-        cx, cy = r.center().x(), r.center().y()
-        if kind == "played":
-            p.setPen(QPen(QColor(theme.TEXT if on else theme.MUTED), 2.2, Qt.PenStyle.SolidLine,
-                          Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
-            path = QPainterPath()
-            path.moveTo(cx - 6, cy + 0.5)
-            path.lineTo(cx - 2, cy + 4.5)
-            path.lineTo(cx + 6, cy - 4.5)
+        c = r.center()
+        accent_a, accent_b = ((theme.ACCENT_PRESSED, theme.ACCENT_HOVER) if kind == "played"
+                              else ("#db2777", "#f9a8d4"))
+        glow = QColor(accent_b)
+
+        if pulse is not None:                       # expanding ring after a toggle
+            glow.setAlpha(int(220 * (1 - pulse)))
+            p.setPen(QPen(glow, 2.5))
             p.setBrush(Qt.BrushStyle.NoBrush)
+            rad = r.width() / 2 + 18 * pulse
+            p.drawEllipse(c, rad, rad)
+
+        scale = 1.14 if hot else 1.0
+        if pulse is not None and pulse < 0.5:       # little "pop"
+            scale *= 1.0 + 0.18 * (1 - abs(pulse - 0.25) * 4)
+        rr = QRectF(0, 0, r.width() * scale, r.height() * scale)
+        rr.moveCenter(c)
+
+        if hot:
+            glow.setAlpha(120)
+            p.setPen(QPen(glow, 4))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(rr.adjusted(-2, -2, 2, 2))
+
+        if on:
+            grad = QLinearGradient(rr.topLeft(), rr.bottomRight())
+            grad.setColorAt(0, QColor(accent_a))
+            grad.setColorAt(1, QColor(accent_b))
+            p.setBrush(QBrush(grad))
+            p.setPen(QPen(QColor(255, 255, 255, 90), 1))
+        else:
+            p.setBrush(QColor(20, 14, 32, 200 if hot else 175))
+            p.setPen(QPen(QColor(255, 255, 255, 170 if hot else 80), 1.2))
+        p.drawEllipse(rr)
+
+        ink = QColor(255, 255, 255, 255 if (on or hot) else 205)
+        k = scale
+        if kind == "played":
+            p.setPen(QPen(ink, 2.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            path = QPainterPath()
+            path.moveTo(c.x() - 6.5 * k, c.y() + 0.5 * k)
+            path.lineTo(c.x() - 2 * k, c.y() + 5 * k)
+            path.lineTo(c.x() + 7 * k, c.y() - 5 * k)
             p.drawPath(path)
         else:
-            p.setPen(QColor("#f472b6" if on else theme.MUTED))
-            f = QFont(p.font())
-            f.setPixelSize(16)
-            p.setFont(f)
-            p.drawText(r, int(Qt.AlignmentFlag.AlignCenter), "♥" if on else "♡")
+            heart = self._heart(c.x(), c.y() + 1.5 * k, 8.5 * k)
+            if on:
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(ink)
+            else:
+                p.setPen(QPen(ink, 1.9, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+                              Qt.PenJoinStyle.RoundJoin))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawPath(heart)
+        p.restore()
+
+    def _draw_hint(self, p: QPainter, img: QRectF, anchor: QRectF, text: str, kind: str) -> None:
+        p.save()
+        f = QFont(p.font())
+        f.setPixelSize(11)
+        f.setBold(True)
+        p.setFont(f)
+        tw = p.fontMetrics().horizontalAdvance(text) + 18
+        pill = QRectF(0, 0, tw, 22)
+        pill.moveBottom(anchor.top() - 7)
+        pill.moveRight(min(img.right() - 6, anchor.right() + 4))
+        if pill.left() < img.left() + 6:
+            pill.moveLeft(img.left() + 6)
+        border = QColor(theme.ACCENT_HOVER if kind == "played" else "#f472b6")
+        p.setPen(QPen(border, 1))
+        p.setBrush(QColor(13, 10, 20, 235))
+        p.drawRoundedRect(pill, 11, 11)
+        p.setPen(QColor(theme.TEXT))
+        p.drawText(pill, int(Qt.AlignmentFlag.AlignCenter), text)
         p.restore()
 
     # -- paint
@@ -287,6 +357,13 @@ class CardDelegate(QStyledItemDelegate):
             p.drawText(img.adjusted(16, 0, -16, -12),
                        int(Qt.AlignmentFlag.AlignLeft) | int(Qt.AlignmentFlag.AlignBottom), title)
 
+        # ---- bottom fade behind the hover buttons
+        if hover and st is not CardStyle.LIBRARY:
+            fade = QLinearGradient(0, img.bottom() - img.height() * 0.42, 0, img.bottom())
+            fade.setColorAt(0, QColor(10, 7, 18, 0))
+            fade.setColorAt(1, QColor(10, 7, 18, 215))
+            p.fillRect(img, QBrush(fade))
+
         # ---- progress bar
         frac = progress_fraction(item)
         if frac > 0:
@@ -337,11 +414,26 @@ class CardDelegate(QStyledItemDelegate):
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawRoundedRect(img.adjusted(1, 1, -1, -1), RADIUS, RADIUS)
 
-        # ---- hover buttons: watched / favourite
-        rects = self.icon_rects(option.rect) if hover else None
+        # ---- hover buttons: watched / favourite (pulses keep drawing after the mouse leaves)
+        rects = self.icon_rects(option.rect)
         if rects:
-            self._draw_icon_button(p, rects[0], "played", item.user_data.played)
-            self._draw_icon_button(p, rects[1], "favorite", item.user_data.is_favorite)
+            now = time.monotonic()
+            states = (("played", rects[0], item.user_data.played), ("favorite", rects[1], item.user_data.is_favorite))
+            for kind, rect, on in states:
+                started = self.pulses.get((item.id, kind))
+                pulse = (now - started) / PULSE_SECONDS if started is not None else None
+                if pulse is not None and pulse >= 1:
+                    pulse = None
+                if hover or pulse is not None:
+                    hot = hover and self.hot == (item.id, kind)
+                    self._draw_icon_button(p, rect, kind, on, hot, pulse)
+            if hover and self.hot and self.hot[0] == item.id:
+                kind = self.hot[1]
+                ud = item.user_data
+                text = {("played", True): "Watched ✓  · undo", ("played", False): "Mark as watched",
+                        ("favorite", True): "In favourites · remove", ("favorite", False): "Add to favourites"}[
+                    (kind, ud.played if kind == "played" else ud.is_favorite)]
+                self._draw_hint(p, img, rects[0] if kind == "played" else rects[1], text, kind)
 
         # ---- text below
         if st.has_text:
@@ -367,6 +459,7 @@ class CardViewBase(QListView):
     item_menu = Signal(object, QPoint)         # Item, global position
     toggle_played = Signal(object)             # Item
     toggle_favorite = Signal(object)           # Item
+    play_clicked = Signal(object)              # Item (hover ▶ on episode rows)
 
     def __init__(self, model: QAbstractListModel, delegate: "CardDelegate", parent=None):
         super().__init__(parent)
@@ -387,6 +480,31 @@ class CardViewBase(QListView):
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.clicked.connect(self._on_click)
         self.customContextMenuRequested.connect(self._on_menu)
+        self._pulse_timer = QTimer(self)
+        self._pulse_timer.setInterval(16)
+        self._pulse_timer.timeout.connect(self._pulse_tick)
+
+    def _pulse_tick(self) -> None:
+        now = time.monotonic()
+        d = self.card_delegate
+        for key in [k for k, t in d.pulses.items() if now - t > PULSE_SECONDS]:
+            del d.pulses[key]
+        self.viewport().update()
+        if not d.pulses:
+            self._pulse_timer.stop()
+
+    def _start_pulse(self, item: Item, kind: str) -> None:
+        self.card_delegate.pulses[(item.id, kind)] = time.monotonic()
+        if not self._pulse_timer.isActive():
+            self._pulse_timer.start()
+
+    def mouseMoveEvent(self, e) -> None:
+        super().mouseMoveEvent(e)
+        hit = self._icon_hit(e.position().toPoint())
+        hot = (hit[0].id, hit[1]) if hit else None
+        if hot != self.card_delegate.hot:
+            self.card_delegate.hot = hot
+            self.viewport().update()
 
     def _item_at(self, pos: QPoint) -> Item | None:
         idx = self.indexAt(pos)
@@ -421,12 +539,17 @@ class CardViewBase(QListView):
             hit = self._icon_hit(e.position().toPoint())
             if hit:
                 item, kind = hit
-                (self.toggle_played if kind == "played" else self.toggle_favorite).emit(item)
+                if kind == "play":
+                    self.play_clicked.emit(item)
+                else:
+                    self._start_pulse(item, kind)
+                    (self.toggle_played if kind == "played" else self.toggle_favorite).emit(item)
                 e.accept()
                 return
         super().mouseReleaseEvent(e)
 
     def leaveEvent(self, e) -> None:
+        self.card_delegate.hot = None
         self.viewport().update()
         super().leaveEvent(e)
 

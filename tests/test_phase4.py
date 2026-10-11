@@ -111,3 +111,27 @@ class Cli(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class YearsFix(IsolatedTest):
+    def test_years_come_from_legacy_filters_and_filter_works(self):
+        srv = self.serve(extra_movies=40)
+        c = JellyfinClient(srv.url, device_id="dev")
+        auth.login_password(c, "Alice", "hunter2")
+        q = LibraryQuery("view-movies", "Movie")
+        opts = browse.filter_options(c, q)
+        self.assertTrue(opts.years, "years must not be empty even though Filters2 has none")
+        self.assertIn("Action", opts.genres)
+        y = opts.years[3]
+        items = browse.fetch_page(c, LibraryQuery("view-movies", "Movie", years=[y])).items
+        self.assertTrue(items)
+        self.assertTrue(all(i.production_year == y for i in items))
+
+    def test_year_sort(self):
+        srv = self.serve(extra_movies=40)
+        c = JellyfinClient(srv.url, device_id="dev")
+        auth.login_password(c, "Alice", "hunter2")
+        q = LibraryQuery("view-movies", "Movie", sort="year", descending=True)
+        self.assertTrue(q.params()["sortBy"].startswith("ProductionYear"))
+        ys = [i.production_year for i in browse.fetch_page(c, q).items]
+        self.assertEqual(ys, sorted(ys, reverse=True))
