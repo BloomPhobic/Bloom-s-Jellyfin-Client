@@ -106,3 +106,27 @@ class DetailData(IsolatedTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Overviews(unittest.TestCase):
+    def test_html_cleanup(self):
+        from bloomsarchive.display import overview_html, overview_plain
+        t = ("Teikou won.\n<br><br>\nAt Seirin, <i>Kuroko no Basket</i> &amp; friends"
+             "<script>alert(1)</script> <a href='x'>more</a> 1 < 2")
+        self.assertEqual(overview_html(t),
+                         "Teikou won.<br><br>At Seirin, <i>Kuroko no Basket</i> &amp; friends more 1 &lt; 2")
+        self.assertEqual(overview_plain(t), "Teikou won. At Seirin, Kuroko no Basket & friends more 1 < 2")
+        self.assertEqual(overview_html("<p>One</p><p>Two</p>"), "One<br><br>Two")
+        self.assertEqual(overview_html(None), "")
+
+
+class GenreLinks(IsolatedTest):
+    def test_library_for(self):
+        srv = self.serve()
+        c = JellyfinClient(srv.url, device_id="dev")
+        auth.login_password(c, "Alice", "hunter2")
+        views = ["view-movies", "view-anime"]
+        ep = details.get_item(c, "ep-2")
+        self.assertEqual(details.library_for(c, ep, views), "view-anime")
+        self.assertEqual(details.library_for(c, details.get_item(c, "movie-1"), views), "view-movies")
+        self.assertIsNone(details.library_for(c, details.get_item(c, "movie-1"), ["elsewhere"]))

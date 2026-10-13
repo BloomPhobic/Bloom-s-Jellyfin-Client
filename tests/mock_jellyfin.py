@@ -381,6 +381,7 @@ class Handler(BaseHTTPRequestHandler):
                 eps = [e for e in st.items.values() if e["Type"] == "Episode" and e.get("SeasonId") == sn["Id"]]
                 sn["UserData"] = {**sn["UserData"],
                                   "UnplayedItemCount": sum(1 for e in eps if not e["UserData"]["Played"])}
+                sn["ChildCount"] = len(eps)
             seasons.sort(key=lambda x: x.get("IndexNumber", 0))
             return self._send(200, {"Items": seasons, "TotalRecordCount": len(seasons)})
         mm = m(r"/Shows/([^/]+)/Episodes")
@@ -389,6 +390,15 @@ class Handler(BaseHTTPRequestHandler):
                    and (not q.get("seasonId") or e.get("SeasonId") == q["seasonId"])]
             eps.sort(key=lambda e: (e.get("ParentIndexNumber", 0), e.get("IndexNumber", 0)))
             return self._send(200, {"Items": [self._maybe_strip(e) for e in eps], "TotalRecordCount": len(eps)})
+        mm = m(r"/Items/([^/]+)/Ancestors")
+        if mm:
+            chain, cur = [], st.items.get(mm.group(1))
+            while cur and cur.get("ParentId"):
+                pid = cur["ParentId"]
+                cur = st.items.get(pid) or next((v for v in st.views if v["Id"] == pid), None)
+                if cur:
+                    chain.append(cur)
+            return self._send(200, chain + [{"Id": "root", "Name": "Media Folders", "Type": "AggregateFolder"}])
         mm = m(r"/Items/([^/]+)/PlaybackInfo")
         if mm and method == "POST":
             body = self._body()

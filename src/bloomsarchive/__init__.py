@@ -2,4 +2,4 @@
 
 APP_NAME = "Bloom's Archive"
 APP_ID = "bloomsarchive"
-__version__ = "0.5.0"
+__version__ = "0.6.0"

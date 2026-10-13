@@ -30,7 +30,7 @@ class LibraryPage(Page):
 
     def __init__(self, session: Session, loader: ImageLoader, actions: ItemActions, title: str,
                  base: LibraryQuery, nav_key: str, state_key: str | None,
-                 show_favourites_filter: bool = True, parent=None):
+                 show_favourites_filter: bool = True, initial: dict | None = None, parent=None):
         super().__init__(parent)
         self.setObjectName("root")
         self.session = session
@@ -43,6 +43,8 @@ class LibraryPage(Page):
 
         saved = session.settings.get(f"library_state.{state_key}") if state_key else None
         self.query = base.with_state(saved)
+        if initial:                       # e.g. a genre link: start filtered, keep your sort
+            self.query = replace(self.query.cleared(), **initial)
 
         v = QVBoxLayout(self)
         v.setContentsMargins(22, 16, 10, 0)

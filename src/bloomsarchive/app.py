@@ -103,6 +103,11 @@ class MainWindow(QMainWindow):
                 return True
         return False
 
+    def closeEvent(self, e) -> None:
+        # Final position to Jellyfin and close mpv, even if the user quits mid-episode.
+        self.shell.player.shutdown()
+        super().closeEvent(e)
+
     # ------------------------------------------------------------------ flow
     def _on_ready(self, user: User | None) -> None:
         if user:

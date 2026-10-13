@@ -10,11 +10,12 @@ from PySide6.QtWidgets import (QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineE
 
 from .. import APP_NAME
 from ..api import browse
-from ..api import tracks
+from ..api import details
 from ..api.browse import LibraryQuery
 from ..api.tracks import PlayRequest
 from ..api.models import Item, User
 from ..session import Session
+from ..player.controller import PlaybackController
 from .actions import ItemActions
 from .detail import DetailPage
 from .home import HomePage
@@ -23,6 +24,7 @@ from .search import SearchPage
 from .nav import NavStack, Page, PlaceholderPage
 from .widgets.image_loader import ImageLoader
 from .widgets.toast import Toast
+from .workers import run_async
 
 SIDEBAR_WIDTH = 224
 UNSUPPORTED_LIBRARIES = {"music", "books", "photos", "livetv", "playlists", "homevideos", "musicvideos"}
@@ -66,6 +68,10 @@ class Shell(QWidget):
         self.toast = Toast(self)
         self.actions.toast.connect(self.toast.show_message)
         self.actions.open_requested.connect(self.open_item)
+
+        self.player = PlaybackController(session, self)
+        self.player.error.connect(lambda msg: self.toast.show_message(msg, error=True, ms=6000))
+        self.player.finished.connect(self._playback_finished)
 
         self.home = HomePage(session, loader, self.actions)
         self.home.open_item.connect(self.open_item)
@@ -248,32 +254,38 @@ class Shell(QWidget):
         page = DetailPage(self.session, self.loader, self.actions, item, season_id=season_id)
         page.open_item.connect(self.open_item)
         page.play.connect(self.play_requested)
+        page.open_genre.connect(self.open_genre)
         self.nav.push(page)
 
+    def open_genre(self, item: Item, genre: str) -> None:
+        """Genre tag on a detail page → that item's library, filtered to the genre."""
+        views = list(self._views)
+        c = self.session.client
+
+        def opened(view_id: str | None) -> None:
+            view = next((v for v in views if v.id == view_id), None)
+            if view is None:            # couldn't tell: search all movies and shows
+                q = LibraryQuery(None, "Movie,Series")
+                self._push_library(genre, q, nav_key="", state_key=None, initial={"genres": [genre]})
+                return
+            q = LibraryQuery(view.id, browse.types_for(view.collection_type))
+            self._push_library(view.name, q, f"view:{view.id}", state_key=view.id,
+                               initial={"genres": [genre]})
+
+        run_async(lambda: details.library_for(c, item, [v.id for v in views]), opened,
+                  lambda _e: opened(None))
+
     def play_requested(self, req: PlayRequest) -> None:
-        """Phase 6 hands this to mpv. For now, show exactly what would play."""
-        it = req.item
-        what = f"{it.series_name} {it.episode_label}" if it.type == "Episode" else it.name
-        bits = [f"from {int(req.start_seconds // 60)}:{int(req.start_seconds % 60):02d}"
-                if req.start_seconds else "from the start"]
-        src = next((s for s in it.media_sources if s.id == req.source_id), None)
-        if src is not None and req.audio_index is not None:
-            a = next((x for x in src.audio_streams if x.index == req.audio_index), None)
-            if a:
-                bits.append(f"audio {tracks.language_name(a.language)}")
-        if req.subtitle_index is not None:
-            if req.subtitle_index == tracks.OFF:
-                bits.append("subtitles off")
-            elif src is not None:
-                st = next((x for x in src.subtitle_streams if x.index == req.subtitle_index), None)
-                if st:
-                    bits.append(f"subtitles {tracks.language_name(st.language)}")
-        self.toast.show_message(f"▶ {what} — {', '.join(bits)}. Playback arrives in phase 6.", ms=4500)
+        self.player.request(req)
+
+    def _playback_finished(self, _item: Item) -> None:
+        # Continue Watching, Next Up, progress bars and ticks all changed.
+        self.actions.data_changed.emit()
 
     def _push_library(self, title: str, q: LibraryQuery, nav_key: str, state_key: str | None,
-                      show_fav: bool = True) -> None:
+                      show_fav: bool = True, initial: dict | None = None) -> None:
         page = LibraryPage(self.session, self.loader, self.actions, title, q, nav_key, state_key,
-                           show_favourites_filter=show_fav)
+                           show_favourites_filter=show_fav, initial=initial)
         page.open_item.connect(self.open_item)
         self.nav.push(page)
 

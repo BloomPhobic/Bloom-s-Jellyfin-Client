@@ -9,7 +9,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QListView, QStyle, QStyleOptionViewItem
 
 from ...api.models import Item
-from ...display import progress_fraction
+from ...display import overview_plain, progress_fraction
 from .. import theme
 from .cards import PULSE_SECONDS, CardDelegate, CardStyle, CardViewBase, ItemListModel, ItemRole, KeyRole
 from .image_loader import ImageLoader
@@ -142,7 +142,7 @@ class EpisodeDelegate(CardDelegate):
             p.setFont(f)
             p.setPen(QColor(200, 194, 220))
             ov_rect = QRectF(x, title_rect.bottom() + 24, w, 40)
-            text = " ".join(item.overview.split())
+            text = overview_plain(item.overview)
             fm = p.fontMetrics()
             # two lines max, ellipsis on the second
             cut = len(text)

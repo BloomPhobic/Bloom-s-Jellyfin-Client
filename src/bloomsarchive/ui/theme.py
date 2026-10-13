@@ -92,6 +92,13 @@ QToolButton[role="letter"]:hover {{ background: {RAISED}; color: {ACCENT_HOVER};
 QToolButton[role="letter"]:disabled {{ color: {BORDER}; }}
 QComboBox {{ min-width: 120px; }}
 QLabel[role="detailtitle"] {{ font-size: 36px; font-weight: 700; }}
+QScrollArea[role="plain"], QWidget[role="plain"] {{ background: transparent; }}
+QPushButton[role="tag"] {{
+    background: rgba(139, 92, 246, 0.16); border: 1px solid rgba(167, 139, 250, 0.35);
+    border-radius: 10px; padding: 3px 10px; font-size: 12px; color: {TEXT};
+}}
+QPushButton[role="tag"]:hover {{ background: rgba(139, 92, 246, 0.40); border-color: {ACCENT_HOVER}; }}
+QPushButton[role="primary"], QPushButton[role="toggle"] {{ font-size: 15px; }}
 QLabel[role="tag"] {{
     background: rgba(139, 92, 246, 0.16); border: 1px solid rgba(167, 139, 250, 0.35);
     border-radius: 10px; padding: 3px 10px; font-size: 12px; color: {TEXT};

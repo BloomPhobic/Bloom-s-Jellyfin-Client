@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (QComboBox, QFrame, QGridLayout, QHBoxLayout, QLab
 from ..api import details, images, tracks
 from ..api.models import Item, MediaSource
 from ..api.tracks import OFF, PlayRequest, TrackChoice
-from ..display import year_of
+from ..display import overview_html, year_of
 from ..session import Session
 from .actions import ItemActions
 from .nav import Page
@@ -31,6 +31,22 @@ from .workers import run_async
 log = logging.getLogger(__name__)
 
 PLAYABLE = ("Movie", "Episode", "Video", "MusicVideo")
+ACTION_H = 46
+ACTION_MIN_W = 168
+
+
+def season_label(s: Item) -> str:
+    """'Season 1  ·  12 episodes  ·  3 unwatched' (or '· all watched')."""
+    total = s.child_count
+    n = s.user_data.unplayed_item_count or 0
+    bits = [s.name]
+    if total:
+        bits.append(f"{total} episode{'s' if total != 1 else ''}")
+    if n:
+        bits.append(f"{n} unwatched")
+    elif total:
+        bits.append("all watched ✓")
+    return "  ·  ".join(bits)
 
 
 def clock(seconds: float) -> str:
@@ -62,6 +78,7 @@ def _button(text: str, role: str | None = None, large: bool = False, checkable: 
 class DetailPage(Page):
     open_item = Signal(object)          # Item
     play = Signal(object)               # PlayRequest
+    open_genre = Signal(object, str)    # item, genre
 
     def __init__(self, session: Session, loader: ImageLoader, actions: ItemActions, item: Item,
                  season_id: str | None = None, parent=None):
@@ -108,8 +125,8 @@ class DetailPage(Page):
 
         # ---- header
         self.header = BackdropHeader(self.loader)
-        self.header.setMinimumHeight(440)
         hl = QHBoxLayout(self.header)
+        hl.addStrut(440)           # at least 440 tall, but always tall enough for its content
         hl.setContentsMargins(40, 40, 40, 34)
         hl.setSpacing(34)
         episode = self.item.type == "Episode"
@@ -137,6 +154,7 @@ class DetailPage(Page):
         self.overview_lbl.setWordWrap(True)
         self.overview_lbl.setMaximumWidth(860)
         self.overview_lbl.setProperty("role", "overview")
+        self.overview_lbl.setTextFormat(Qt.TextFormat.RichText)
         self.overview_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.people_lbl = QLabel("")
         self.people_lbl.setProperty("role", "muted")
@@ -161,7 +179,15 @@ class DetailPage(Page):
         self.fav_btn = _button("♡  Favourite", "toggle", checkable=True)
         self.fav_btn.clicked.connect(lambda: self.actions.toggle_favorite(self.item))
         for b in (self.play_btn, self.restart_btn, self.watched_btn, self.fav_btn):
+            b.setFixedHeight(ACTION_H)
             acts.addWidget(b)
+        # Toggles keep one width whatever their label says, so clicking never resizes them.
+        for b, texts in ((self.watched_btn, ("✓  Mark watched", "✓  Watched")),
+                         (self.fav_btn, ("♡  Favourite", "♥  Favourite"))):
+            fm = b.fontMetrics()
+            b.setFixedWidth(max(ACTION_MIN_W, max(fm.horizontalAdvance(t) for t in texts) + 48))
+        self.play_btn.setMinimumWidth(ACTION_MIN_W)
+        self.restart_btn.setMinimumWidth(ACTION_MIN_W)
         acts.addStretch()
         info.addLayout(acts)
 
@@ -177,6 +203,9 @@ class DetailPage(Page):
         self.subs_cb = QComboBox()
         for cb in (self.version_cb, self.audio_cb, self.subs_cb):
             cb.setMinimumWidth(240)
+            cb.setMaximumWidth(460)
+            cb.setMinimumHeight(38)
+            cb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
             cb.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         for col_i, (lbl, cb) in enumerate(((self.version_lbl, self.version_cb),
                                             (QLabel("Audio"), self.audio_cb),
@@ -207,6 +236,8 @@ class DetailPage(Page):
         eps_title = QLabel("Episodes")
         eps_title.setProperty("role", "rowtitle")
         self.season_cb = QComboBox()
+        self.season_cb.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.season_cb.setMinimumHeight(38)
         self.season_cb.currentIndexChanged.connect(self._season_changed)
         self.ep_count = QLabel("")
         self.ep_count.setProperty("role", "muted")
@@ -316,15 +347,18 @@ class DetailPage(Page):
             if w is not None:
                 w.deleteLater()
         for g in it.genres[:6]:
-            tag = QLabel(g)
+            tag = QPushButton(g)
             tag.setProperty("role", "tag")
+            tag.setCursor(Qt.CursorShape.PointingHandCursor)
+            tag.setToolTip(f"Show {g} in this library")
+            tag.clicked.connect(lambda _=False, genre=g: self.open_genre.emit(self.item, genre))
             self.genres_box.addWidget(tag)
         self.genres_box.addStretch()
 
         taglines = it.raw.get("Taglines") or []
         self.tagline_lbl.setText(taglines[0] if taglines else "")
         self.tagline_lbl.setVisible(bool(taglines))
-        self.overview_lbl.setText(it.overview or ("" if loading else "No overview."))
+        self.overview_lbl.setText(overview_html(it.overview) or ("" if loading else "No overview."))
         directors, cast = details.people(it)
         bits = []
         if directors:
@@ -354,7 +388,7 @@ class DetailPage(Page):
         self.play_btn.setEnabled(True)
         pos = p.user_data.playback_position_ticks
         if self.item.type == "Series":
-            label = p.episode_label or p.name
+            label = p.episode_label or ("Special" if (p.parent_index_number or 0) == 0 else "next episode")
             self.play_btn.setText(f"▶  {'Resume' if pos else 'Play'} {label}")
             self.restart_btn.hide()
         else:
@@ -462,8 +496,7 @@ class DetailPage(Page):
         self.season_cb.blockSignals(True)
         self.season_cb.clear()
         for s in b.seasons:
-            n = s.user_data.unplayed_item_count or 0
-            self.season_cb.addItem(s.name + (f"  ·  {n} unwatched" if n else "  ·  ✓"), s.id)
+            self.season_cb.addItem(season_label(s), s.id)
         if b.season is not None:
             self.season_cb.setCurrentIndex(max(0, self.season_cb.findData(b.season.id)))
         self.season_cb.blockSignals(False)

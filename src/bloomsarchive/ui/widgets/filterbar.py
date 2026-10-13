@@ -10,6 +10,8 @@ from PySide6.QtWidgets import (QComboBox, QFrame, QGridLayout, QHBoxLayout, QLab
 from ...api.browse import DEFAULT_DESC, LETTERS, SORTS, FilterOptions, LibraryQuery
 
 STATUS = [("all", "All"), ("unplayed", "Unwatched"), ("played", "Watched")]
+POPUP_PAD = 16
+MAX_CHIP_AREA = 360
 
 
 # =========================================================================== chip picker
@@ -31,8 +33,8 @@ class ChipPopup(QFrame):
         self._chips: dict = {}
 
         v = QVBoxLayout(self)
-        v.setContentsMargins(14, 12, 14, 14)
-        v.setSpacing(10)
+        v.setContentsMargins(POPUP_PAD, POPUP_PAD - 4, POPUP_PAD, POPUP_PAD)
+        v.setSpacing(12)
         head = QHBoxLayout()
         t = QLabel(title)
         t.setProperty("role", "h2")
@@ -59,9 +61,12 @@ class ChipPopup(QFrame):
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.setProperty("role", "plain")
+        self.scroll.viewport().setAutoFillBackground(False)
         self.body = QWidget()
+        self.body.setProperty("role", "plain")
         self.grid = QGridLayout(self.body)
-        self.grid.setContentsMargins(0, 0, 4, 0)
+        self.grid.setContentsMargins(0, 0, 0, 0)
         self.grid.setHorizontalSpacing(6)
         self.grid.setVerticalSpacing(6)
         self.scroll.setWidget(self.body)
@@ -103,9 +108,13 @@ class ChipPopup(QFrame):
             self._chips[value] = chip
         self.empty.setVisible(not values)
         self.scroll.setVisible(bool(values))
-        rows = (len(values) + self.columns - 1) // self.columns
-        self.scroll.setFixedHeight(min(360, max(40, rows * 40)))
-        self.setFixedWidth(min(560, 34 + self.columns * (110 if self.columns <= 3 else 78)))
+        # Size the chip area to its content so the popup has the same padding on all sides.
+        self.body.adjustSize()
+        hint = self.grid.sizeHint()
+        overflow = hint.height() > MAX_CHIP_AREA
+        self.scroll.setFixedHeight(min(MAX_CHIP_AREA, max(40, hint.height())))
+        self.scroll.setFixedWidth(hint.width() + (12 if overflow else 0))
+        self.adjustSize()
 
     def _flip_order(self) -> None:
         self.newest_first = not self.newest_first
@@ -166,7 +175,7 @@ class FilterBar(QWidget):
         self.genres_btn.clicked.connect(lambda: self.genres_pop.show_under(self.genres_btn))
 
         self.years_btn = self._filter_button("Years")
-        self.years_pop = ChipPopup("Years", columns=6, orderable=True, parent=self)
+        self.years_pop = ChipPopup("Years", columns=6, parent=self)   # newest first; sort by Year for order
         self.years_pop.toggled.connect(self._toggle_year)
         self.years_pop.cleared.connect(lambda: self._set(years=[]))
         self.years_btn.clicked.connect(lambda: self.years_pop.show_under(self.years_btn))

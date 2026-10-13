@@ -11,8 +11,9 @@ A desktop client for [Jellyfin](https://jellyfin.org) media servers. Browse with
 | 3 | Shell (sidebar, back/forward, search box), home page with all rows, wide window on Hyprland | done |
 | 4 | Library grid (sort, filters, A–Z jump, lazy paging), Favourites, live search, hover ✓/♥, smooth scrolling | done |
 | 5 | Detail pages, track pickers, seasons and episodes | done |
-| 6 | mpv playback: launch, IPC, resume, progress reporting | next |
-| 7–9 | In-player buttons, skip intro / up next, settings | to do |
+| 6 | mpv playback: launch, IPC, resume, track selection, progress reporting | done |
+| 7 | In-player buttons and menus (bloom.lua), subtitle style memory | next |
+| 8–9 | Skip intro / up next / autoplay, settings | to do |
 
 Phase 1 also includes the segment fetcher (`player/segments.py`) because `--selfcheck` reports which skip-intro source your server has.
 
@@ -118,7 +119,17 @@ Startup finds the server (last working address first, then a background re-probe
 - **Pickers:** Version (when there's more than one file), Audio and Subtitles. Defaults: what you chose last time for that series, then your preferred languages (`languages` in settings.json; Japanese audio + English subtitles by default), then the file's own flags. Dubbed audio in a language you read gets forced/signs subtitles only.
 - **Series:** opens on the season of your Next Up episode. The Play button plays that episode. Each episode row has a thumbnail with progress, a ▶ on hover, and a watched toggle.
 - If a server leaves stream lists out of item responses, the app asks `PlaybackInfo` with transcoding and stream-copy disabled; it's information only and never starts a transcode.
-- Until phase 6, Play shows a message describing exactly what would play.
+- **Genre tags** open the item's own library filtered to that genre (your sort is kept).
+
+## Playback (mpv)
+
+- **Play** opens mpv fullscreen in its own window (Wayland app id `bloomsarchive-player`, for Hyprland rules), streaming the original file with `static=true` — direct play only; if mpv can't open it you get a clear error, never a transcode.
+- It starts **paused for a moment** so your audio/subtitle choice is applied before anything is heard (Jellyfin stream indexes are matched to mpv tracks via `ff-index`; external subtitles are added from the server).
+- **Resume** starts a few seconds before where you stopped (`playback.resume_rewind_seconds`, default 5).
+- Progress goes back to Jellyfin every 10 s and immediately on pause, seek and track changes; a final report when the episode ends, when you quit mpv, or if it crashes. Reports that fail are re-sent. Past `playback.played_threshold_pct` (default 90 %) the item is marked watched.
+- Your own `~/.config/mpv/mpv.conf` applies (`mpv.inherit_user_config`, on by default), except resume points: Jellyfin's win over mpv's watch-later.
+- The access token reaches mpv over its IPC socket as an HTTP header, never on the command line.
+- After playback, Home, grids and detail pages refresh their progress and ticks.
 
 ### Window shape on Hyprland
 

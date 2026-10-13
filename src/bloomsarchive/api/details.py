@@ -76,7 +76,7 @@ def ensure_streams(client: JellyfinClient, item: Item) -> Item:
 
 def seasons(client: JellyfinClient, series_id: str) -> list[Item]:
     data = client.get(f"/Shows/{series_id}/Seasons", userId=client.user_id,
-                      fields="PrimaryImageAspectRatio", **IMAGE_PARAMS) or {}
+                      fields="PrimaryImageAspectRatio,ChildCount", **IMAGE_PARAMS) or {}
     return [Item.from_json(x) for x in data.get("Items", [])]
 
 
@@ -117,3 +117,18 @@ def people(item: Item, limit: int = 8) -> tuple[list[str], list[str]]:
     directors = [p.get("Name", "") for p in ppl if p.get("Type") == "Director"]
     cast = [p.get("Name", "") for p in ppl if p.get("Type") in ("Actor", "GuestStar")]
     return [d for d in directors if d][:3], [c for c in cast if c][:limit]
+
+
+def library_for(client: JellyfinClient, item: Item, view_ids: list[str]) -> str | None:
+    """Which of the user's libraries an item lives in (for 'genre → library' links)."""
+    if item.parent_id in view_ids:
+        return item.parent_id
+    target = item.series_id or item.id
+    try:
+        ancestors = client.get(f"/Items/{target}/Ancestors", userId=client.user_id) or []
+    except HttpError:
+        return None
+    for a in ancestors if isinstance(ancestors, list) else []:
+        if a.get("Id") in view_ids:
+            return a["Id"]
+    return None
