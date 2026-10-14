@@ -72,6 +72,7 @@ class Shell(QWidget):
         self.player = PlaybackController(session, self)
         self.player.error.connect(lambda msg: self.toast.show_message(msg, error=True, ms=6000))
         self.player.finished.connect(self._playback_finished)
+        self.player.library_changed.connect(self.actions.data_changed.emit)
 
         self.home = HomePage(session, loader, self.actions)
         self.home.open_item.connect(self.open_item)

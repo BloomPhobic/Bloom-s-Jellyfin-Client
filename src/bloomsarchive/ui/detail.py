@@ -11,14 +11,14 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, Signal
 from PySide6.QtWidgets import (QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton,
                                QScrollArea, QSizePolicy, QVBoxLayout, QWidget)
 
 from ..api import details, images, tracks
 from ..api.models import Item, MediaSource
 from ..api.tracks import OFF, PlayRequest, TrackChoice
-from ..display import overview_html, year_of
+from ..display import has_resume, is_watched, overview_html, year_of
 from ..session import Session
 from .actions import ItemActions
 from .nav import Page
@@ -175,14 +175,15 @@ class DetailPage(Page):
         self.restart_btn = _button("↺  Start over", large=True)
         self.restart_btn.clicked.connect(lambda: self._play(restart=True))
         self.watched_btn = _button("✓  Watched", "toggle", checkable=True)
-        self.watched_btn.clicked.connect(lambda: self.actions.toggle_played(self.item))
+        self.watched_btn.clicked.connect(self._toggle_watched)
+        self.watched_btn.installEventFilter(self)          # hover shows what a click will do
         self.fav_btn = _button("♡  Favourite", "toggle", checkable=True)
         self.fav_btn.clicked.connect(lambda: self.actions.toggle_favorite(self.item))
         for b in (self.play_btn, self.restart_btn, self.watched_btn, self.fav_btn):
             b.setFixedHeight(ACTION_H)
             acts.addWidget(b)
         # Toggles keep one width whatever their label says, so clicking never resizes them.
-        for b, texts in ((self.watched_btn, ("✓  Mark watched", "✓  Watched")),
+        for b, texts in ((self.watched_btn, ("✓  Mark watched", "✓  Watched", "↺  Mark unwatched")),
                          (self.fav_btn, ("♡  Favourite", "♥  Favourite"))):
             fm = b.fontMetrics()
             b.setFixedWidth(max(ACTION_MIN_W, max(fm.horizontalAdvance(t) for t in texts) + 48))
@@ -282,8 +283,14 @@ class DetailPage(Page):
                     or details.pick_season(b.seasons, b.next_up)
                 if b.season is not None:
                     b.episodes = details.episodes(c, item_id, b.season.id)
-                if b.next_up is None and b.episodes:
-                    b.next_up = next((e for e in b.episodes if not e.user_data.played), b.episodes[0])
+                if b.next_up is None:
+                    unwatched = next((e for e in b.episodes if not e.user_data.played), None)
+                    if unwatched is not None:
+                        b.next_up = unwatched
+                    else:              # all watched: "Watch again" from the first real episode
+                        everything = details.episodes(c, item_id)
+                        regular = [e for e in everything if (e.parent_index_number or 0) > 0]
+                        b.next_up = (regular or everything or [None])[0]
             return b
 
         run_async(work, lambda b: gen == self._gen and self._fill(b),
@@ -371,12 +378,42 @@ class DetailPage(Page):
 
     def _sync_toggles(self) -> None:
         ud = self.item.user_data
-        for b, on, on_text, off_text in ((self.watched_btn, ud.played, "✓  Watched", "✓  Mark watched"),
+        watched = self._watched()
+        self.watched_btn.setToolTip("Click to mark unwatched" if watched else "Click to mark watched")
+        for b, on, on_text, off_text in ((self.watched_btn, watched, "✓  Watched", "✓  Mark watched"),
                                          (self.fav_btn, ud.is_favorite, "♥  Favourite", "♡  Favourite")):
             b.blockSignals(True)
             b.setChecked(on)
             b.setText(on_text if on else off_text)
             b.blockSignals(False)
+
+    def _watched(self) -> bool:
+        """For a series: every regular season has no unwatched episodes (specials don't count)."""
+        b = self._bundle
+        if self.item.type == "Series" and b is not None and b.seasons:
+            regular = [s for s in b.seasons if (s.index_number or 0) > 0] or b.seasons
+            return all((s.user_data.unplayed_item_count or 0) == 0 for s in regular)
+        return is_watched(self.item)
+
+    def _toggle_watched(self) -> None:
+        target = not self._watched()
+        if self.item.type == "Series" and self._bundle is not None:
+            # keep the header and season list honest straight away
+            for s in self._bundle.seasons:
+                if target:
+                    s.user_data.unplayed_item_count = 0
+                elif s.user_data.unplayed_item_count == 0:
+                    s.user_data.unplayed_item_count = s.child_count or 1
+        self.actions.set_played(self.item, target)
+        self._sync_toggles()
+
+    def eventFilter(self, obj, ev) -> bool:
+        if obj is self.watched_btn and self._watched():
+            if ev.type() == QEvent.Type.Enter:
+                self.watched_btn.setText("↺  Mark unwatched")
+            elif ev.type() == QEvent.Type.Leave:
+                self.watched_btn.setText("✓  Watched")
+        return super().eventFilter(obj, ev)
 
     def _update_play_buttons(self) -> None:
         p = self.playable
@@ -386,15 +423,21 @@ class DetailPage(Page):
             self.restart_btn.hide()
             return
         self.play_btn.setEnabled(True)
-        pos = p.user_data.playback_position_ticks
+        resume = has_resume(p)
         if self.item.type == "Series":
             label = p.episode_label or ("Special" if (p.parent_index_number or 0) == 0 else "next episode")
-            self.play_btn.setText(f"▶  {'Resume' if pos else 'Play'} {label}")
+            if self._watched() and not resume:
+                self.play_btn.setText(f"↺  Watch again · {label}")
+            else:
+                self.play_btn.setText(f"▶  {'Resume' if resume else 'Play'} {label}")
             self.restart_btn.hide()
         else:
             secs = tracks.resume_seconds(p, rewind=0)
-            self.play_btn.setText(f"▶  Resume from {clock(secs)}" if pos else "▶  Play")
-            self.restart_btn.setVisible(bool(pos))
+            if resume:
+                self.play_btn.setText(f"▶  Resume from {clock(secs)}")
+            else:
+                self.play_btn.setText("↺  Watch again" if p.user_data.played else "▶  Play")
+            self.restart_btn.setVisible(resume)
 
     # ================================================================== tracks
     def _prefs(self) -> tuple[list[str], list[str]]:

@@ -12,8 +12,9 @@ A desktop client for [Jellyfin](https://jellyfin.org) media servers. Browse with
 | 4 | Library grid (sort, filters, A–Z jump, lazy paging), Favourites, live search, hover ✓/♥, smooth scrolling | done |
 | 5 | Detail pages, track pickers, seasons and episodes | done |
 | 6 | mpv playback: launch, IPC, resume, track selection, progress reporting | done |
-| 7 | In-player buttons and menus (bloom.lua), subtitle style memory | next |
-| 8–9 | Skip intro / up next / autoplay, settings | to do |
+| 7 | In-player controls (bloom.lua): transport, menus, episode browser, style memory, basic autoplay | done |
+| 8 | Skip intro/credits, Up Next card with countdown, "Still watching?" | next |
+| 9 | Settings page, polish | to do |
 
 Phase 1 also includes the segment fetcher (`player/segments.py`) because `--selfcheck` reports which skip-intro source your server has.
 
@@ -130,6 +131,20 @@ Startup finds the server (last working address first, then a background re-probe
 - Your own `~/.config/mpv/mpv.conf` applies (`mpv.inherit_user_config`, on by default), except resume points: Jellyfin's win over mpv's watch-later.
 - The access token reaches mpv over its IPC socket as an HTTP header, never on the command line.
 - After playback, Home, grids and detail pages refresh their progress and ticks.
+
+## In-player controls
+
+Move the mouse and Jellyfin-style controls appear over the video (they hide after 2.5 s, and stay while paused). Your own mpv keybinds keep working.
+
+- **Top:** ← back to the app, series · episode and title.
+- **Seek bar:** click or drag; hover shows the time and chapter; lighter part = buffered; ticks = chapters.
+- **Left:** previous episode, −10 s, play/pause, +30 s, next episode, time, *Ends at*.
+- **Right:** ♥ favourite, episode browser (seasons → episodes, ✓ watched, jump to any), audio, subtitles (CC), subtitle style (Aa: size, bold, font, outline, position, how styled ASS subs are treated), SYNC (subtitle timing: ±0.1 s / ±1 s, reset; the button shows the current offset, and it resets for the next file), version (if several files), AUTO (autoplay next episode), volume + mute, fullscreen.
+- Clicking a button again closes its menu.
+- Click the picture to pause; double-click for fullscreen; Esc closes a menu.
+- Audio/subtitle choices made in the player are remembered for the series; subtitle style changes are remembered for everything (only what you changed — the rest still comes from your mpv.conf).
+- With AUTO on, the next episode starts when one ends (the Up Next card and countdown come in phase 8).
+- Prefer your own mpv UI (uosc etc.)? Set `"mpv": {"use_bloom_ui": false}`.
 
 ### Window shape on Hyprland
 

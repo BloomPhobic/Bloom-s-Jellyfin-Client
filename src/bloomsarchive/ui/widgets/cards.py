@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QListView
 
 from ...api import images
 from ...api.models import Item
-from ...display import card_text, progress_fraction, unplayed_badge
+from ...display import card_text, is_watched, progress_fraction, unplayed_badge
 from .. import theme
 from .image_loader import ImageLoader
 from .smooth import SmoothScroller, is_touchpad
@@ -374,7 +374,7 @@ class CardDelegate(QStyledItemDelegate):
 
         # ---- badges (top-right): played tick or unplayed count; favourite heart top-left
         badge_font = self._font(option.font, 12, True)
-        if item.user_data.played and st is not CardStyle.LIBRARY:
+        if is_watched(item) and st is not CardStyle.LIBRARY:
             c = QRectF(img.right() - 30, img.top() + 8, 22, 22)
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(theme.ACCENT))
@@ -418,7 +418,7 @@ class CardDelegate(QStyledItemDelegate):
         rects = self.icon_rects(option.rect)
         if rects:
             now = time.monotonic()
-            states = (("played", rects[0], item.user_data.played), ("favorite", rects[1], item.user_data.is_favorite))
+            states = (("played", rects[0], is_watched(item)), ("favorite", rects[1], item.user_data.is_favorite))
             for kind, rect, on in states:
                 started = self.pulses.get((item.id, kind))
                 pulse = (now - started) / PULSE_SECONDS if started is not None else None
@@ -432,7 +432,7 @@ class CardDelegate(QStyledItemDelegate):
                 ud = item.user_data
                 text = {("played", True): "Watched ✓  · undo", ("played", False): "Mark as watched",
                         ("favorite", True): "In favourites · remove", ("favorite", False): "Add to favourites"}[
-                    (kind, ud.played if kind == "played" else ud.is_favorite)]
+                    (kind, is_watched(item) if kind == "played" else ud.is_favorite)]
                 self._draw_hint(p, img, rects[0] if kind == "played" else rects[1], text, kind)
 
         # ---- text below

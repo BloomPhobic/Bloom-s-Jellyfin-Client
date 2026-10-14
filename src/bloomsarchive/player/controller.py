@@ -11,23 +11,25 @@ One mpv process is reused for the session so fullscreen stays put.
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 
 from PySide6.QtCore import QObject, QProcess, QTimer, Signal
 
-from ..api import details, tracks
+from ..api import details, library, tracks
 from ..api.models import Item
 from ..api.tracks import OFF, PlayRequest
 from ..session import Session
 from ..ui.workers import run_async
-from . import launcher
+from . import launcher, overlay_info
 from .session import PlaybackSession, Resolved, jellyfin_index_for, mpv_track_for
 
 log = logging.getLogger(__name__)
 
 PROGRESS_MS = 10_000
 OBSERVED = ("time-pos", "duration", "pause", "aid", "sid", "track-list", "eof-reached")
+STYLE_PROPS = ("sub-scale", "sub-bold", "sub-font", "sub-border-size", "sub-pos", "sub-ass-override")
 
 
 class PlaybackController(QObject):
@@ -35,6 +37,7 @@ class PlaybackController(QObject):
     error = Signal(str)                     # user-facing message
     started = Signal(object)                # Item
     finished = Signal(object)               # Item (stopped, ended or crashed)
+    library_changed = Signal()              # e.g. favourite toggled from the player
 
     def __init__(self, session: Session, parent: QObject | None = None):
         super().__init__(parent)
@@ -51,6 +54,14 @@ class PlaybackController(QObject):
         self._file_open = False
         self._launches = 0
         self._gen = 0
+
+        self._seasons: list[Item] = []
+        self._episodes: list[Item] = []
+        self._style_pending: dict | None = None
+        self._style_timer = QTimer(self)
+        self._style_timer.setSingleShot(True)
+        self._style_timer.setInterval(800)
+        self._style_timer.timeout.connect(self._flush_style)
 
         self.progress_timer = QTimer(self)
         self.progress_timer.setInterval(PROGRESS_MS)
@@ -86,7 +97,14 @@ class PlaybackController(QObject):
                                                list(langs.get("subtitle") or []), remembered, src.id)
                 audio = choice.audio_index if audio is None else audio
                 sub = choice.subtitle_index if sub is None else sub
-            return Resolved(item, src, audio, sub, req.start_seconds)
+            r = Resolved(item, src, audio, sub, req.start_seconds)
+            if item.type == "Episode" and item.series_id:
+                try:
+                    r.seasons = details.seasons(client, item.series_id)
+                    r.episodes = details.episodes(client, item.series_id)
+                except Exception as e:          # the overlay just shows less
+                    log.info("couldn't load episode list: %s", e)
+            return r
 
         run_async(resolve, lambda r: gen == self._gen and self._resolved(r),
                   lambda e: gen == self._gen and self._fail(f"Couldn't prepare playback: {e}"))
@@ -97,6 +115,8 @@ class PlaybackController(QObject):
         threshold = float(self.session.settings.get("playback.played_threshold_pct", 90) or 90)
         self.play = PlaybackSession(self.session.client, r, threshold)
         self._pending = r
+        self._seasons = list(getattr(r, "seasons", []) or [])
+        self._episodes = list(getattr(r, "episodes", []) or [])
         if self.proc is not None and self.ipc is not None and self.ipc.is_connected:
             self._load()
         else:
@@ -111,7 +131,9 @@ class PlaybackController(QObject):
         self._launches += 1
         sock = launcher.socket_path(str(self._launches))
         mpv = launcher.find_mpv(self.session.settings.get("mpv.path", "mpv")) or "mpv"
-        args = launcher.build_args(self.session.settings.get("mpv", {}) or {}, sock, script=None)
+        mpv_settings = self.session.settings.get("mpv", {}) or {}
+        script = overlay_info.script_path() if mpv_settings.get("use_bloom_ui", True) else None
+        args = launcher.build_args(mpv_settings, sock, script=script)
         self.proc = QProcess(self)
         self.proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         self.proc.readyReadStandardOutput.connect(self._drain_output)
@@ -164,7 +186,7 @@ class PlaybackController(QObject):
 
     def _ipc_ready(self) -> None:
         assert self.ipc is not None
-        self.ipc.observe(*OBSERVED)
+        self.ipc.observe(*OBSERVED, *STYLE_PROPS)
         self._load()
 
     # ================================================================== per item
@@ -184,8 +206,14 @@ class PlaybackController(QObject):
         ipc.set_property("force-media-title", title)
         ipc.set_property("start", f"{max(0.0, r.start_seconds):.3f}" if r.start_seconds > 0 else "none")
         ipc.set_property("pause", True)            # pick tracks before anything is heard
+        ipc.set_property("sub-delay", 0)           # a subtitle offset fixes one file, not the next
         ass = self.session.settings.get("subtitles.ass_override", "scale") or "scale"
         ipc.set_property("sub-ass-override", ass)
+        # Subtitle style you changed in the player before: re-apply it (only what you changed,
+        # so everything else still comes from your mpv.conf).
+        for prop, value in (self.session.settings.get("subtitles.saved", {}) or {}).items():
+            if prop in STYLE_PROPS:
+                ipc.set_property(prop, value)
         if self._file_open:               # replacing a file: mpv will report its end; not ours to handle
             self._ignore_end += 1
         self._file_open = True
@@ -221,6 +249,8 @@ class PlaybackController(QObject):
             ps.started = True
             run_async(ps.report_start)
             self.progress_timer.start()
+            self._send_info()
+            ipc.command("script-message-to", "bloom", "bloom-show")
 
         ipc.get_property("track-list", with_tracks)
 
@@ -246,11 +276,20 @@ class PlaybackController(QObject):
             if kind == "audio" and idx is not None and idx != ps.audio_index:
                 ps.audio_index = idx
                 self._report("AudioTrackChange")
+                self._remember_tracks()
             elif kind == "sub" and idx is not None and idx != ps.subtitle_index:
                 ps.subtitle_index = idx
                 self._report("SubtitleTrackChange")
+                self._remember_tracks()
+        elif name in STYLE_PROPS and ps.started and not ps.stop_requested and value is not None:
+            self._remember_style(name, value)
 
     def _event(self, name: str, msg: dict) -> None:
+        if name == "client-message":
+            args = msg.get("args") or []
+            if args:
+                self._overlay_message(str(args[0]), [str(a) for a in args[1:]])
+            return
         if name == "file-loaded":
             self._file_loaded()
         elif name == "seek":
@@ -268,6 +307,8 @@ class PlaybackController(QObject):
                 detail = msg.get("file_error") or "unknown error"
                 self._fail(f"mpv couldn't play this file ({detail}). Direct play only — nothing was transcoded.")
                 return
+            if reason == "eof" and self._autoplay_next():
+                return
             self._finish(ended=(reason == "eof"), quit_player=(reason == "eof"))
         elif name == "shutdown":
             self._ipc_lost()
@@ -279,6 +320,81 @@ class PlaybackController(QObject):
         if self.play is not None and self.play.started and not self.play.stop_requested:
             self._finish(ended=False, quit_player=False)
         self._set_state("idle")
+
+    # ================================================================== overlay
+    def _send_info(self) -> None:
+        ps, ipc = self.play, self.ipc
+        if ps is None or ipc is None:
+            return
+        info = overlay_info.build_info(ps.item, ps.source, self._seasons, self._episodes,
+                                       bool(self.session.settings.get("playback.autoplay", True)))
+        ipc.command("script-message-to", "bloom", "bloom-info", json.dumps(info))
+
+    def _episode(self, item_id: str) -> Item | None:
+        return next((e for e in self._episodes if e.id == item_id), None)
+
+    def _play_episode(self, ep: Item, start_over: bool = False) -> None:
+        rewind = float(self.session.settings.get("playback.resume_rewind_seconds", 5) or 0)
+        start = 0.0 if start_over else tracks.resume_seconds(ep, rewind)
+        self.request(PlayRequest(ep, start_seconds=start))
+
+    def _overlay_message(self, name: str, args: list[str]) -> None:
+        ps = self.play
+        if name in ("bloom-next", "bloom-prev") and ps is not None:
+            prev, nxt = overlay_info.neighbours(self._episodes, ps.item.id)
+            target = nxt if name == "bloom-next" else prev
+            if target is not None:
+                self._play_episode(target)
+        elif name == "bloom-play-item" and args:
+            ep = self._episode(args[0])
+            if ep is not None:
+                self._play_episode(ep)
+        elif name == "bloom-favorite" and args and ps is not None:
+            want = args[0] == "yes"
+            item, client = ps.item, self.session.client
+
+            def done(_r) -> None:
+                item.user_data.is_favorite = want
+                self.library_changed.emit()
+
+            run_async(lambda: library.set_favorite(client, item.id, want), done,
+                      lambda e: (self.error.emit(f"Couldn't update favourite: {e}"), self._send_info()))
+        elif name == "bloom-autoplay" and args:
+            self.session.settings.set("playback.autoplay", args[0] == "yes")
+        elif name == "bloom-version" and args and ps is not None:
+            self.request(PlayRequest(ps.item, source_id=args[0], start_seconds=max(0.0, ps.position)))
+
+    def _autoplay_next(self) -> bool:
+        ps = self.play
+        if ps is None or ps.item.type != "Episode" or not self.session.settings.get("playback.autoplay", True):
+            return False
+        _prev, nxt = overlay_info.neighbours(self._episodes, ps.item.id)
+        if nxt is None:
+            return False
+        self._stop_current(ended=True)
+        self._file_open = False          # mpv is idle after eof; nothing to replace
+        self._play_episode(nxt, start_over=True)
+        return True
+
+    def _remember_tracks(self) -> None:
+        ps = self.play
+        if ps is None or not ps.item.series_id:
+            return
+        self.session.settings.set(f"series_tracks.{ps.item.series_id}",
+                                  tracks.memory_for(ps.source, ps.audio_index, ps.subtitle_index))
+
+    def _remember_style(self, prop: str, value) -> None:
+        saved = dict(self.session.settings.get("subtitles.saved", {}) or {})
+        if saved.get(prop) == value:
+            return
+        saved[prop] = value
+        self._style_pending = saved
+        self._style_timer.start()          # debounce: menus fire several changes quickly
+
+    def _flush_style(self) -> None:
+        if self._style_pending is not None:
+            self.session.settings.set("subtitles.saved", self._style_pending)
+            self._style_pending = None
 
     # ================================================================== finishing
     def _report(self, event: str) -> None:

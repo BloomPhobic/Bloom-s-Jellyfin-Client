@@ -130,3 +130,18 @@ class GenreLinks(IsolatedTest):
         self.assertEqual(details.library_for(c, ep, views), "view-anime")
         self.assertEqual(details.library_for(c, details.get_item(c, "movie-1"), views), "view-movies")
         self.assertIsNone(details.library_for(c, details.get_item(c, "movie-1"), ["elsewhere"]))
+
+
+class WatchedState(unittest.TestCase):
+    def test_series_all_episodes_watched(self):
+        from bloomsarchive.display import has_resume, is_watched
+        s = Item.from_json({"Id": "s", "Type": "Series", "UserData": {"Played": False, "UnplayedItemCount": 0}})
+        self.assertTrue(is_watched(s))
+        self.assertFalse(is_watched(Item.from_json({"Id": "s", "Type": "Series",
+                                                    "UserData": {"UnplayedItemCount": 3}})))
+        self.assertFalse(is_watched(Item.from_json({"Id": "s", "Type": "Series", "ChildCount": 0,
+                                                    "UserData": {"UnplayedItemCount": 0}})))
+        ep = Item.from_json({"Id": "e", "Type": "Episode",
+                             "UserData": {"Played": True, "PlaybackPositionTicks": 12_000_000_000}})
+        self.assertFalse(has_resume(ep))
+        self.assertEqual(tracks.resume_seconds(ep), 0.0)

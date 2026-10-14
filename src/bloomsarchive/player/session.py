@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import threading
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ..api import library
 from ..api.client import JellyfinClient, JellyfinError
@@ -30,6 +30,8 @@ class Resolved:
     audio_index: int | None
     subtitle_index: int            # OFF = none
     start_seconds: float = 0.0
+    seasons: list = field(default_factory=list)     # for the in-player episode browser
+    episodes: list = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- urls

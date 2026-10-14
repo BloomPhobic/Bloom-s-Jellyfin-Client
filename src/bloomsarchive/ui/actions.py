@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QMenu, QWidget
 
 from ..api import library
 from ..api.models import Item
+from ..display import is_watched
 from ..session import Session
 from .workers import run_async
 
@@ -37,7 +38,7 @@ class ItemActions(QObject):
         ud = item.user_data
         a_open = QAction("Open", menu)
         a_open.triggered.connect(lambda: self.open_requested.emit(item))
-        a_played = QAction("Mark as unwatched" if ud.played else "Mark as watched", menu)
+        a_played = QAction("Mark as unwatched" if is_watched(item) else "Mark as watched", menu)
         a_played.triggered.connect(lambda: self.toggle_played(item))
         a_fav = QAction("Remove from Favourites" if ud.is_favorite else "Add to Favourites", menu)
         a_fav.triggered.connect(lambda: self.toggle_favorite(item))
@@ -49,7 +50,10 @@ class ItemActions(QObject):
 
     # ------------------------------------------------------------------ toggles
     def toggle_played(self, item: Item) -> None:
-        new = not item.user_data.played
+        self.set_played(item, not is_watched(item))
+
+    def set_played(self, item: Item, new: bool) -> None:
+        """Mark watched (True) or unwatched (False), whatever the item's current flags say."""
         old_pos = item.user_data.playback_position_ticks
         old_pct = item.user_data.played_percentage
         old_unplayed = item.user_data.unplayed_item_count
@@ -61,6 +65,8 @@ class ItemActions(QObject):
                 it.user_data.played_percentage = None
                 if it.user_data.unplayed_item_count:
                     it.user_data.unplayed_item_count = 0
+            elif it.type in ("Series", "Season") and it.user_data.unplayed_item_count == 0:
+                it.user_data.unplayed_item_count = None     # real count arrives with the refresh
 
         def revert(it: Item) -> None:
             it.user_data.played = not new

@@ -34,6 +34,25 @@ def card_text(item: Item) -> tuple[str, str]:
     return item.name, year_of(item)
 
 
+def is_watched(item: Item) -> bool:
+    """Watched, including a series/season whose episodes are all watched.
+
+    Jellyfin can leave a series' own Played flag false (specials, a stray
+    resume point) even when every episode is ticked; the unplayed count is
+    the reliable signal.
+    """
+    ud = item.user_data
+    if ud.played:
+        return True
+    if item.type in ("Series", "Season", "BoxSet"):
+        return ud.unplayed_item_count == 0 and item.child_count != 0
+    return False
+
+
+def has_resume(item: Item) -> bool:
+    return bool(item.user_data.playback_position_ticks) and not item.user_data.played
+
+
 def progress_fraction(item: Item) -> float:
     """0..1 watched fraction for in-progress items (0 when untouched or finished)."""
     ud = item.user_data

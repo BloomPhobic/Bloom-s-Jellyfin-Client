@@ -18,7 +18,13 @@ LANGUAGES = {
     "pol": "Polish", "dut": "Dutch", "nld": "Dutch", "swe": "Swedish", "hin": "Hindi",
     "tha": "Thai", "vie": "Vietnamese", "ind": "Indonesian", "may": "Malay", "msa": "Malay",
     "und": "Unknown",
+    "en": "English", "ja": "Japanese", "tr": "Turkish", "de": "German", "fr": "French", "es": "Spanish",
+    "it": "Italian", "pt": "Portuguese", "ru": "Russian", "zh": "Chinese", "ko": "Korean", "ar": "Arabic",
+    "pl": "Polish", "nl": "Dutch", "sv": "Swedish", "hi": "Hindi", "th": "Thai", "vi": "Vietnamese",
+    "id": "Indonesian", "ms": "Malay",
 }
+REGIONS = {"419": "Latin America", "br": "Brazil", "pt": "Portugal", "mx": "Mexico", "es": "Spain",
+           "us": "US", "gb": "UK", "cn": "China", "tw": "Taiwan", "hk": "Hong Kong"}
 
 
 @dataclass
@@ -38,9 +44,15 @@ class PlayRequest:
 
 
 def language_name(code: str | None) -> str:
+    """'jpn' → Japanese, 'en' → English, 'es-419' → Spanish (Latin America)."""
     if not code:
         return "Unknown"
-    return LANGUAGES.get(code.lower(), code.upper() if len(code) <= 3 else code)
+    c = code.lower().replace("_", "-")
+    base, _, region = c.partition("-")
+    name = LANGUAGES.get(base) or LANGUAGES.get(c)
+    if name is None:
+        return code.upper() if len(code) <= 3 else code
+    return f"{name} ({REGIONS.get(region, region.upper())})" if region else name
 
 
 def _lang(s: MediaStream) -> str:
@@ -48,14 +60,21 @@ def _lang(s: MediaStream) -> str:
 
 
 def _same_lang(a: str, b: str) -> bool:
-    groups = [{"ger", "deu"}, {"fre", "fra"}, {"chi", "zho"}, {"dut", "nld"}, {"may", "msa"}]
-    a, b = a.lower(), b.lower()
-    return a == b or any(a in g and b in g for g in groups)
+    """Same language whatever the code style: eng/en, ger/deu/de, pt-BR/por …"""
+    def name(code: str) -> str:
+        base = code.lower().replace("_", "-").split("-")[0]
+        return LANGUAGES.get(base, base)
+    return name(a) == name(b)
+
+
+def _repeats_language(title: str, lang: str | None) -> bool:
+    base = language_name((lang or "").split("-")[0]).lower()
+    return base in title.lower() or title.lower() in language_name(lang).lower()
 
 
 def audio_label(s: MediaStream) -> str:
     bits = [language_name(s.language)]
-    if s.title and s.title.lower() not in bits[0].lower():
+    if s.title and not _repeats_language(s.title, s.language):
         bits.append(s.title)
     tech = (s.codec or "").upper()
     if s.channels:
@@ -68,7 +87,7 @@ def audio_label(s: MediaStream) -> str:
 
 def subtitle_label(s: MediaStream) -> str:
     bits = [language_name(s.language)]
-    if s.title and s.title.lower() not in bits[0].lower():
+    if s.title and not _repeats_language(s.title, s.language):
         bits.append(s.title)
     fmt = (s.codec or "").upper().replace("SUBRIP", "SRT")
     if fmt:
@@ -160,5 +179,7 @@ def memory_for(src: MediaSource, audio_index: int | None, subtitle_index: int) -
 
 
 def resume_seconds(item: Item, rewind: float = 5.0) -> float:
+    if item.user_data.played:          # a finished item starts over, whatever position is stored
+        return 0.0
     pos = ticks_to_seconds(item.user_data.playback_position_ticks)
     return max(0.0, pos - rewind) if pos > 0 else 0.0
