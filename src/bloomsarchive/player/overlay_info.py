@@ -37,8 +37,36 @@ def _short_version(src: MediaSource) -> str:
     return (src.container or "file").upper()
 
 
+class AutoplayChain:
+    """Counts episodes that started on their own; asks "Still watching?" at the limit.
+
+    Any real interaction (a click in the player, pausing, seeking) resets it, so
+    only someone who has genuinely dozed off gets asked.
+    """
+
+    def __init__(self, limit: int = 5):
+        self.limit = max(1, int(limit or 5))
+        self.count = 0
+
+    def interaction(self) -> None:
+        self.count = 0
+
+    def auto_started(self) -> None:
+        self.count += 1
+
+    @property
+    def should_ask(self) -> bool:
+        """True when the *next* automatic start would exceed the limit."""
+        return self.count + 1 >= self.limit
+
+
+def segments_for_lua(segments) -> list[dict]:
+    return [s.to_lua() for s in segments]
+
+
 def build_info(item: Item, source: MediaSource | None, seasons: list[Item], episodes: list[Item],
-               autoplay: bool) -> dict:
+               autoplay: bool, skip_mode: str = "button", up_next_seconds: int = 20,
+               still_watching: bool = False) -> dict:
     is_ep = item.type == "Episode"
     if is_ep:
         bits = [b for b in (item.series_name, item.episode_label) if b]
@@ -76,7 +104,15 @@ def build_info(item: Item, source: MediaSource | None, seasons: list[Item], epis
             versions.append({"id": s.id, "label": tracks.source_label(s, i), "short": _short_version(s),
                              "current": s.id == source.id})
 
+    nxt_info = None
+    if nxt is not None:
+        nxt_info = {"id": nxt.id, "label": nxt.episode_label, "title": nxt.name}
+
     return {
+        "next": nxt_info,
+        "skip_mode": skip_mode if skip_mode in ("button", "auto") else "button",
+        "up_next_seconds": int(up_next_seconds or 20),
+        "still_watching": bool(still_watching),
         "title": item.name,
         "subtitle": subtitle,
         "is_episode": is_ep,

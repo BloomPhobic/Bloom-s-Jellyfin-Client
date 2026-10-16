@@ -32,6 +32,7 @@ class Resolved:
     start_seconds: float = 0.0
     seasons: list = field(default_factory=list)     # for the in-player episode browser
     episodes: list = field(default_factory=list)
+    segments: list = field(default_factory=list)    # intro/credits spans (api.models.Segment)
 
 
 # --------------------------------------------------------------------------- urls

@@ -65,13 +65,47 @@ class OverlayInfo(IsolatedTest):
 @unittest.skipUnless(shutil.which("texlua") or shutil.which("lua") or shutil.which("luajit"),
                      "no Lua interpreter")
 class OverlayScript(unittest.TestCase):
-    def test_lua_overlay(self):
+    def run_lua(self, name):
         lua = shutil.which("luajit") or shutil.which("lua") or shutil.which("texlua")
-        r = subprocess.run([lua, str(ROOT / "tests" / "lua" / "test_overlay.lua")],
-                           capture_output=True, text=True, timeout=60)
+        r = subprocess.run([lua, str(ROOT / "tests" / "lua" / name)], capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("0 failed", r.stdout)
+        self.assertIn(" 0 failed", r.stdout)
+
+    def test_lua_overlay(self):
+        self.run_lua("test_overlay.lua")
+
+    def test_lua_skip_and_up_next(self):
+        self.run_lua("test_upnext.lua")
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Phase8Info(IsolatedTest):
+    def test_next_and_chain(self):
+        srv = self.serve(second_season=True)
+        c = JellyfinClient(srv.url, device_id="dev")
+        auth.login_password(c, "Alice", "hunter2")
+        eps = details.episodes(c, "series-1")
+        ep = details.get_item(c, "ep-3")
+        info = overlay_info.build_info(ep, ep.media_sources[0], details.seasons(c, "series-1"), eps,
+                                       autoplay=True, skip_mode="auto", up_next_seconds=15, still_watching=True)
+        self.assertEqual(info["next"], {"id": "s2-ep-1", "label": "S02E01", "title": "Second 1"})
+        self.assertEqual((info["skip_mode"], info["up_next_seconds"], info["still_watching"]), ("auto", 15, True))
+        last = details.get_item(c, "s2-ep-2")
+        self.assertIsNone(overlay_info.build_info(last, last.media_sources[0], [], eps, True)["next"])
+
+        chain = overlay_info.AutoplayChain(limit=3)
+        self.assertFalse(chain.should_ask)
+        chain.auto_started()
+        self.assertFalse(chain.should_ask)
+        chain.auto_started()
+        self.assertTrue(chain.should_ask, "third automatic start in a row asks first")
+        chain.interaction()
+        self.assertFalse(chain.should_ask)
+
+    def test_segments_payload(self):
+        from bloomsarchive.api.models import Segment
+        self.assertEqual(overlay_info.segments_for_lua([Segment("Intro", 90.0, 180.25, "media-segments")]),
+                         [{"type": "Intro", "start": 90.0, "end": 180.25}])

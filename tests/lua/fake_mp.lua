@@ -75,6 +75,7 @@ function mp.set_property_bool(name, v) setp(name, v) end
 function mp.commandv(...) local a = { ... }; table.insert(M.commands, a)
     if a[1] == "script-message" then table.insert(M.sent, { table.unpack(a, 2) }) end
     if a[1] == "cycle" then M.set(a[2], not M.props[a[2]]) end
+    if a[1] == "seek" and a[3] and a[3]:find("absolute") then M.set("time-pos", tonumber(a[2])) end
 end
 function mp.command(c) table.insert(M.commands, { c }) end
 function mp.add_forced_key_binding(key, name, fn, opts) M.bindings[key] = { name = name, fn = fn, opts = opts } end
@@ -93,6 +94,10 @@ end
 function mp.add_periodic_timer(p, fn) return timer(fn, p, false) end
 function mp.add_timeout(p, fn) return timer(fn, p, true) end
 function mp.register_script_message(name, fn) M.messages[name] = fn end
+M.events = {}
+M.osd = {}
+function mp.register_event(name, fn) M.events[name] = M.events[name] or {}; table.insert(M.events[name], fn) end
+function mp.osd_message(text) table.insert(M.osd, text) end
 function mp.create_osd_overlay(fmt)
     local o = { format = fmt, data = "", res_x = 0, res_y = 0, updates = 0 }
     function o:update() self.updates = self.updates + 1 end
@@ -130,6 +135,7 @@ function M.click(x, y)
 end
 function M.key(k) local b = M.bindings[k]; if b then b.fn({ event = "press" }) end end
 function M.message(name, ...) M.messages[name](...) end
+function M.event(name) for _, fn in ipairs(M.events[name] or {}) do fn({ event = name }) end end
 
 package.preload["mp"] = function() return mp end
 package.preload["mp.utils"] = function() return { parse_json = decode } end

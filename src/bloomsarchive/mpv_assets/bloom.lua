@@ -29,6 +29,9 @@ local S = {
     visible = false, last_move = 0, mx = -1, my = -1, hover_window = true,
     hits = {}, pressed = nil, drag = nil, pending_click = nil,
     menu = nil,
+    segments = {},
+    file = { cancelled = false, card_since = nil, fired = false, skipped = {} },
+    extras_sig = "",
     info = { title = "", subtitle = "", has_prev = false, has_next = false, favorite = false,
              autoplay = true, is_episode = false, seasons = {}, versions = {}, current_id = "" },
     p = { ["time-pos"] = 0, duration = 0, pause = false, volume = 100, mute = false, fullscreen = true,
@@ -566,15 +569,7 @@ local function render_menu(row_top)
     end
 end
 
-local function render()
-    out = {}
-    S.prev_hits = S.hits
-    S.hits = {}
-    if not S.visible then
-        overlay.data = ""
-        overlay:update()
-        return
-    end
+local function render_controls()
     local w, h, sc = S.w, S.h, S.sc
     local p = S.p
     local margin = 34 * sc
@@ -721,8 +716,133 @@ local function render()
     end
 
     render_menu(bar_y - 18 * sc)
+end
 
-    overlay.res_x, overlay.res_y = w, h
+-- ===================================================================== skip + up next
+-- Drawn even when the controls are hidden.
+
+local SKIP_LABEL = { Intro = "Skip Intro", Outro = "Skip Credits", Recap = "Skip Recap", Preview = "Skip Preview" }
+
+local function active_segment()
+    local t = S.p["time-pos"] or 0
+    for _, seg in ipairs(S.segments) do
+        if t >= seg.start and t < seg["end"] - 0.5 then return seg end
+    end
+end
+
+local function card_state()
+    local nxt = S.info.next
+    if not nxt or S.file.cancelled then return nil end
+    local t, d = S.p["time-pos"] or 0, S.p.duration or 0
+    local total = tonumber(S.info.up_next_seconds) or 20
+    local seg = active_segment()
+    local remaining = d - t
+    local trigger = (d > 0 and remaining <= total) or (seg and seg.type == "Outro")
+    if not trigger then
+        S.file.card_since = nil
+        return nil
+    end
+    if not S.file.card_since then S.file.card_since = now() end
+    local mode = S.info.still_watching and "ask" or (S.info.autoplay and "countdown" or "manual")
+    local left = math.min(total - (now() - S.file.card_since), math.max(0, remaining))
+    return { mode = mode, left = math.max(0, left), total = total, next = nxt }
+end
+
+local function skip_segment(seg, auto)
+    local d = S.p.duration or 0
+    if seg.type == "Outro" and S.info.next then
+        send("bloom-play-next", auto and "auto" or "user")
+        return
+    end
+    if auto then send("bloom-autoskip") end
+    local target = seg["end"]
+    if seg.type == "Outro" and d > 0 and target >= d - 1 then target = d end     -- last episode: just end
+    mp.commandv("seek", tostring(target), "absolute")
+    if auto then mp.osd_message((SKIP_LABEL[seg.type] or "Skip"):gsub("^Skip", "Skipped"), 2) end
+end
+
+local function pill(id, label, x, y, w, h, primary, fn)
+    local hot = hovering(id)
+    if primary then
+        rect(x, y, w, h, hot and C.accent2 or C.accent, 0, h / 2)
+    else
+        rect(x, y, w, h, C.raised, hot and 0 or 40, h / 2)
+        push(string.format("{\\an7\\pos(0,0)\\1a&HFF&\\3c&H%s&\\bord%s\\shad0\\p1}%s{\\p0}",
+            hot and C.accent2 or C.muted, f1(1.2 * S.sc), rrect_path(x, y, w, h, h / 2)))
+    end
+    text(x + w / 2, y + h / 2, label, h * 0.4, 5, C.white, 0, true)
+    hit(x, y, x + w, y + h, id, fn)
+end
+
+local function render_extras(card, seg)
+    local sc, w, h = S.sc, S.w, S.h
+    local margin = 34 * sc
+    local base = S.visible and (h - 140 * sc) or (h - 56 * sc)
+    if card then
+        local cw, ch = 470 * sc, 156 * sc
+        local x, y = w - margin - cw, base - ch
+        rect(x, y, cw, ch, C.bg, 20, 16 * sc)
+        push(string.format("{\\an7\\pos(0,0)\\1a&HFF&\\3c&H%s&\\bord%s\\shad0\\p1}%s{\\p0}",
+            C.accent, f1(1.4 * sc), rrect_path(x, y, cw, ch, 16 * sc)))
+        local pad = 22 * sc
+        local nxt = card.next
+        if card.mode == "ask" then
+            text(x + pad, y + 30 * sc, "STILL WATCHING?", 14 * sc, 4, C.accent2, 0, true)
+            text(x + pad, y + 62 * sc, clip("Up next: " .. (nxt.label or "") .. " · " .. (nxt.title or ""),
+                cw - 2 * pad, 21 * sc), 21 * sc, 4, C.text, 0, true)
+            pill("card-play", "Continue", x + pad, y + ch - 62 * sc, 170 * sc, 44 * sc, true,
+                function() send("bloom-play-next", "user") end)
+            pill("card-cancel", "Stop", x + pad + 184 * sc, y + ch - 62 * sc, 130 * sc, 44 * sc, false,
+                function() mp.command("quit") end)
+        else
+            text(x + pad, y + 30 * sc, "UP NEXT", 14 * sc, 4, C.accent2, 0, true)
+            text(x + pad, y + 62 * sc, clip((nxt.label and nxt.label ~= "" and (nxt.label .. " · ") or "") ..
+                (nxt.title or ""), cw - 2 * pad, 22 * sc), 22 * sc, 4, C.text, 0, true)
+            local play_label = card.mode == "countdown" and string.format("Play now · %d", math.ceil(card.left))
+                or "Play now"
+            pill("card-play", play_label, x + pad, y + ch - 62 * sc, 190 * sc, 44 * sc, true,
+                function() send("bloom-play-next", "user") end)
+            pill("card-cancel", "Cancel", x + pad + 204 * sc, y + ch - 62 * sc, 130 * sc, 44 * sc, false,
+                function()
+                    S.file.cancelled = true
+                    send("bloom-cancel-next")
+                end)
+            if card.mode == "countdown" then                     -- draining bar along the bottom edge
+                local f = card.total > 0 and (card.left / card.total) or 0
+                rect(x + 16 * sc, y + ch - 7 * sc, (cw - 32 * sc) * f, 3 * sc, C.accent, 0, 1.5 * sc)
+            end
+        end
+        base = y - 14 * sc
+    end
+    if seg and SKIP_LABEL[seg.type] and not (card and seg.type == "Outro") then
+        local label = SKIP_LABEL[seg.type]
+        local bw, bh = (#label * 0.62 * 20 + 56) * sc, 54 * sc
+        pill("skip", label .. "  ›", w - margin - bw, base - bh, bw, bh, false, function() skip_segment(seg, false) end)
+    end
+end
+
+local function render()
+    out = {}
+    S.prev_hits = S.hits
+    S.hits = {}
+    local seg = active_segment()
+    local card = card_state()
+    if seg and S.info.skip_mode == "auto" then              -- auto-skip once per segment
+        local key = seg.type .. ":" .. tostring(seg.start)
+        if not S.file.skipped[key] then
+            S.file.skipped[key] = true
+            skip_segment(seg, true)
+        end
+        seg = nil
+    end
+    if not S.visible and not card and not seg then
+        overlay.data = ""
+        overlay:update()
+        return
+    end
+    if S.visible then render_controls() end
+    render_extras(card, seg)
+    overlay.res_x, overlay.res_y = S.w, S.h
     overlay.data = table.concat(out, "\n")
     overlay:update()
 end
@@ -741,7 +861,24 @@ local function over_controls()
     return S.my >= S.h - 220 * S.sc or S.my <= 110 * S.sc
 end
 
+local function extras_signature()
+    local seg = active_segment()
+    local card = card_state()
+    if card and card.mode == "countdown" and card.left <= 0 and not S.file.fired
+        and (S.p.duration or 0) - (S.p["time-pos"] or 0) > 1.0 then     -- at the very end, eof handles it
+        S.file.fired = true
+        send("bloom-play-next", "auto")
+    end
+    return (seg and (seg.type .. seg.start) or "-") .. "|" ..
+        (card and (card.mode .. math.floor(card.left * 10)) or "-")
+end
+
 local function tick()
+    local sig = extras_signature()
+    if sig ~= S.extras_sig then
+        S.extras_sig = sig
+        dirty = true
+    end
     if S.visible then
         local idle = now() - S.last_move
         if not S.menu and not S.drag and not keep_while_paused and idle > HIDE_AFTER
@@ -780,10 +917,10 @@ local function on_click(e)
     local ev = e.event
     if ev == "down" then
         S.last_move = now()
-        if not S.visible then set_visible(true) end
-        render()                                  -- refresh hit areas for this frame
+        -- hit-test what is on screen right now (the last frame), before anything moves
         local h = hit_at(S.mx, S.my)
         S.pressed = h
+        if not h and not S.visible then set_visible(true) end
         if h and h.extra and (h.extra.seek or h.extra.vol) then
             S.drag = { area = h, kind = h.extra.seek and "seek" or "vol" }
             drag_update(false)
@@ -796,16 +933,17 @@ local function on_click(e)
             dirty = true
             return
         end
-        local h = hit_at(S.mx, S.my)
         local pressed = S.pressed
         S.pressed = nil
-        if h and pressed and h.id == pressed.id then
-            if h.fn then h.fn() end
+        -- released on the thing that was pressed (by its own rectangle: the layout may
+        -- have shifted in between, e.g. the controls fading in)
+        if pressed and S.mx >= pressed.x1 and S.mx <= pressed.x2 and S.my >= pressed.y1 and S.my <= pressed.y2 then
+            if pressed.fn then pressed.fn() end
             dirty = true
             return
         end
         if S.menu then close_menu(); return end
-        if not h then
+        if not pressed then
             -- click on the picture: toggle pause, unless it turns out to be a double-click
             if S.pending_click then S.pending_click:kill() end
             S.pending_click = mp.add_timeout(0.25, function() S.pending_click = nil; toggle_pause() end)
@@ -868,12 +1006,29 @@ end)
 mp.register_script_message("bloom-info", function(json)
     local info = utils.parse_json(json or "")
     if type(info) == "table" then
+        -- start from defaults: JSON null arrives as a missing key, and stale values
+        -- (e.g. the previous episode's "next") must not survive
+        S.info = { title = "", subtitle = "", has_prev = false, has_next = false, favorite = false,
+                   autoplay = true, is_episode = false, seasons = {}, versions = {}, current_id = "",
+                   next = nil, skip_mode = "button", up_next_seconds = 20, still_watching = false }
         for k, v in pairs(info) do S.info[k] = v end
         if S.menu then refresh_menu() end
         dirty = true
     else
         msg.warn("bloom-info: bad json")
     end
+end)
+
+mp.register_script_message("bloom-segments", function(json)
+    local segs = utils.parse_json(json or "")
+    S.segments = type(segs) == "table" and segs or {}
+    dirty = true
+end)
+
+mp.register_event("file-loaded", function()
+    S.file = { cancelled = false, card_since = nil, fired = false, skipped = {} }
+    S.segments = {}
+    dirty = true
 end)
 
 mp.register_script_message("bloom-show", function() S.last_move = now(); set_visible(true) end)

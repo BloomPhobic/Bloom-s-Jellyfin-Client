@@ -13,8 +13,8 @@ A desktop client for [Jellyfin](https://jellyfin.org) media servers. Browse with
 | 5 | Detail pages, track pickers, seasons and episodes | done |
 | 6 | mpv playback: launch, IPC, resume, track selection, progress reporting | done |
 | 7 | In-player controls (bloom.lua): transport, menus, episode browser, style memory, basic autoplay | done |
-| 8 | Skip intro/credits, Up Next card with countdown, "Still watching?" | next |
-| 9 | Settings page, polish | to do |
+| 8 | Skip intro/credits, Up Next card with countdown, "Still watching?" | done |
+| 9 | Settings page, polish, error states | next |
 
 Phase 1 also includes the segment fetcher (`player/segments.py`) because `--selfcheck` reports which skip-intro source your server has.
 
@@ -143,7 +143,9 @@ Move the mouse and Jellyfin-style controls appear over the video (they hide afte
 - Clicking a button again closes its menu.
 - Click the picture to pause; double-click for fullscreen; Esc closes a menu.
 - Audio/subtitle choices made in the player are remembered for the series; subtitle style changes are remembered for everything (only what you changed — the rest still comes from your mpv.conf).
-- With AUTO on, the next episode starts when one ends (the Up Next card and countdown come in phase 8).
+- **Skip Intro / Skip Credits** appear (even with the controls hidden) while Jellyfin's media segments — or the Intro Skipper plugin, or chapter names — say an intro/credits/recap is playing. Set `"playback": {"skip_mode": "auto"}` to skip automatically.
+- **Up Next:** when the credits start (or in the last 20 s, `playback.up_next_seconds`) a card shows the next episode with **Play now · 20** counting down and **Cancel**. With AUTO off it waits for you. Reaching Up Next counts the episode as watched.
+- **Still watching?** After 5 episodes in a row that started by themselves with no clicks, pauses or seeks (`playback.autoplay_limit`), the card asks instead of counting down; with no answer, playback stops at the end of the episode.
 - Prefer your own mpv UI (uosc etc.)? Set `"mpv": {"use_bloom_ui": false}`.
 
 ### Window shape on Hyprland
