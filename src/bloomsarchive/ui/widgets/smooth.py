@@ -14,6 +14,9 @@ NOTCH = 120
 PIXELS_PER_NOTCH = 120
 DURATION_MS = 240
 
+# Settings → App → Smooth scrolling. Checked on every wheel notch, so it applies at once.
+ENABLED = True
+
 
 class SmoothScroller(QObject):
     """Animates one scrollbar towards an accumulating target."""
@@ -34,6 +37,10 @@ class SmoothScroller(QObject):
         running = self.anim.state() == QPropertyAnimation.State.Running
         base = self._target if (running and self._target is not None) else self.bar.value()
         target = int(max(self.bar.minimum(), min(self.bar.maximum(), base + pixels)))
+        if not ENABLED:                        # plain jumps, same distance
+            self.stop()
+            self.bar.setValue(target)
+            return
         if target == self.bar.value() and not running:
             return
         self._target = target

@@ -1,5 +1,5 @@
 """The signed-in shell: top bar (back/forward, search, user menu), sidebar, and
-the page stack. Details (phase 5) and Settings (phase 9) are placeholders.
+the page stack.
 """
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from .detail import DetailPage
 from .home import HomePage
 from .library import LibraryPage
 from .search import SearchPage
+from .settings import SettingsPage
 from .nav import NavStack, Page, PlaceholderPage
 from .widgets.image_loader import ImageLoader
 from .widgets.toast import Toast
@@ -42,6 +43,7 @@ def _nav_button(text: str, key: str) -> QPushButton:
 class Shell(QWidget):
     switch_user = Signal()
     log_out = Signal()
+    forget_server = Signal()
 
     def __init__(self, session: Session, loader: ImageLoader, parent: QWidget | None = None):
         super().__init__(parent)
@@ -297,7 +299,14 @@ class Shell(QWidget):
         self._push_library("Favourites", q, "favourites", state_key="favourites", show_fav=False)
 
     def _open_settings(self) -> None:
-        self.nav.push(PlaceholderPage("Settings", "Settings arrive in phase 9.", nav_key="settings"))
+        if isinstance(self.nav.current, SettingsPage):
+            return
+        page = SettingsPage(self.session, self.loader)
+        page.switch_user.connect(self.switch_user.emit)
+        page.log_out.connect(self.log_out.emit)
+        page.forget_server.connect(self.forget_server.emit)
+        page.toast.connect(lambda msg, err: self.toast.show_message(msg, error=err, ms=5000 if err else 2800))
+        self.nav.push(page)
 
     def _search_page(self) -> SearchPage:
         cur = self.nav.current

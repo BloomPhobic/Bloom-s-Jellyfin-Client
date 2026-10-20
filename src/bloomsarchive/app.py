@@ -21,6 +21,7 @@ from .ui import theme
 from .ui.login import LoginScreen
 from .ui.shell import Shell
 from .ui.startup import StartupScreen
+from .ui.widgets import smooth
 from .ui.widgets.image_loader import ImageLoader
 from .ui.workers import run_async
 
@@ -53,6 +54,7 @@ class MainWindow(QMainWindow):
         self.login.signed_in.connect(self.show_shell)
         self.shell.switch_user.connect(self._switch_user)
         self.shell.log_out.connect(self._log_out)
+        self.shell.forget_server.connect(self._forget_server)
 
         self.bridge = SessionBridge(self)
         self.bridge.unauthorized.connect(self._session_ended)
@@ -134,6 +136,14 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(APP_NAME)
         run_async(self.session.logout, lambda _r: self.show_login(), lambda _e: self.show_login())
 
+    def _forget_server(self) -> None:
+        """Settings → Forget server: back to the startup screen, which asks to pin again."""
+        self.shell.player.shutdown()
+        self.session.forget_server()
+        self.setWindowTitle(APP_NAME)
+        self.stack.setCurrentWidget(self.startup)
+        self.startup.start()
+
     # ------------------------------------------------------------------ 401
     def _on_unauthorized_worker(self) -> None:
         # Runs on whichever worker got the 401.
@@ -154,6 +164,7 @@ def run_app(argv: list[str]) -> int:
     theme.apply(app)
 
     session = Session()
+    smooth.ENABLED = bool(session.settings.get("ui.smooth_scroll", True))
     win = MainWindow(session)
     win.show()
     QTimer.singleShot(0, win.startup.start)

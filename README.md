@@ -14,9 +14,9 @@ A desktop client for [Jellyfin](https://jellyfin.org) media servers. Browse with
 | 6 | mpv playback: launch, IPC, resume, track selection, progress reporting | done |
 | 7 | In-player controls (bloom.lua): transport, menus, episode browser, style memory, basic autoplay | done |
 | 8 | Skip intro/credits, Up Next card with countdown, "Still watching?" | done |
-| 9 | Settings page, polish, error states | next |
+| 9 | Settings page | done |
 
-Phase 1 also includes the segment fetcher (`player/segments.py`) because `--selfcheck` reports which skip-intro source your server has.
+Phase 1 also includes the segment fetcher (`player/segments.py`), because `--selfcheck` reports which skip-intro source your server has.
 
 ## Install (Arch Linux)
 
@@ -90,7 +90,7 @@ bloomsarchive            # or: python -m bloomsarchive --debug
 Startup finds the server (last working address first, then a background re-probe that switches to a better one), asks you to confirm the server on first run, and signs you straight in if your stored token is still valid. Otherwise you get the login screen:
 
 - **Profiles** — click your avatar. Users without a password sign in immediately; a user whose token is still stored (after *Switch user*) switches back without a password.
-- **Quick Connect** — shows a 6-digit code; approve it from any signed-in Jellyfin session (profile menu → Quick Connect). Expires after 5 minutes.
+- **Quick Connect** — shows a 6-digit code; approve it from any signed-in Jellyfin session (profile menu → Quick Connect), or from *Settings → Account* in this app on another computer. Expires after 5 minutes.
 - **Manual login** — for users hidden from the profile list.
 - *Switch user* keeps your token; *Log out* revokes it on the server. If the server ever rejects your token, you're sent back to sign in.
 
@@ -117,7 +117,7 @@ Startup finds the server (last working address first, then a background re-probe
 ## Detail pages
 
 - **Movies and episodes:** backdrop, poster or still, year/runtime/rating, genres, tagline, overview, director and cast; **Play / Resume from mm:ss**, **Start over**, **Watched**, **Favourite**.
-- **Pickers:** Version (when there's more than one file), Audio and Subtitles. Defaults: what you chose last time for that series, then your preferred languages (`languages` in settings.json; Japanese audio + English subtitles by default), then the file's own flags. Dubbed audio in a language you read gets forced/signs subtitles only.
+- **Pickers:** Version (when there's more than one file), Audio and Subtitles. Defaults: what you chose last time for that series, then your preferred languages (*Settings → Languages*; Japanese audio + English subtitles by default), then the file's own flags. Dubbed audio in a language you read gets forced/signs subtitles only.
 - **Series:** opens on the season of your Next Up episode. The Play button plays that episode. Each episode row has a thumbnail with progress, a ▶ on hover, and a watched toggle.
 - If a server leaves stream lists out of item responses, the app asks `PlaybackInfo` with transcoding and stream-copy disabled; it's information only and never starts a transcode.
 - **Genre tags** open the item's own library filtered to that genre (your sort is kept).
@@ -126,9 +126,9 @@ Startup finds the server (last working address first, then a background re-probe
 
 - **Play** opens mpv fullscreen in its own window (Wayland app id `bloomsarchive-player`, for Hyprland rules), streaming the original file with `static=true` — direct play only; if mpv can't open it you get a clear error, never a transcode.
 - It starts **paused for a moment** so your audio/subtitle choice is applied before anything is heard (Jellyfin stream indexes are matched to mpv tracks via `ff-index`; external subtitles are added from the server).
-- **Resume** starts a few seconds before where you stopped (`playback.resume_rewind_seconds`, default 5).
-- Progress goes back to Jellyfin every 10 s and immediately on pause, seek and track changes; a final report when the episode ends, when you quit mpv, or if it crashes. Reports that fail are re-sent. Past `playback.played_threshold_pct` (default 90 %) the item is marked watched.
-- Your own `~/.config/mpv/mpv.conf` applies (`mpv.inherit_user_config`, on by default), except resume points: Jellyfin's win over mpv's watch-later.
+- **Resume** starts a few seconds before where you stopped (default 5 s, in Settings).
+- Progress goes back to Jellyfin every 10 s and immediately on pause, seek and track changes; a final report when the episode ends, when you quit mpv, or if it crashes. Reports that fail are re-sent. Past the watched threshold (default 90 %) the item is marked watched.
+- Your own `~/.config/mpv/mpv.conf` applies (*Use my mpv.conf* in Settings, on by default), except resume points: Jellyfin's win over mpv's watch-later.
 - The access token reaches mpv over its IPC socket as an HTTP header, never on the command line.
 - After playback, Home, grids and detail pages refresh their progress and ticks.
 
@@ -143,14 +143,29 @@ Move the mouse and Jellyfin-style controls appear over the video (they hide afte
 - Clicking a button again closes its menu.
 - Click the picture to pause; double-click for fullscreen; Esc closes a menu.
 - Audio/subtitle choices made in the player are remembered for the series; subtitle style changes are remembered for everything (only what you changed — the rest still comes from your mpv.conf).
-- **Skip Intro / Skip Credits** appear (even with the controls hidden) while Jellyfin's media segments — or the Intro Skipper plugin, or chapter names — say an intro/credits/recap is playing. Set `"playback": {"skip_mode": "auto"}` to skip automatically.
-- **Up Next:** when the credits start (or in the last 20 s, `playback.up_next_seconds`) a card shows the next episode with **Play now · 20** counting down and **Cancel**. With AUTO off it waits for you. Reaching Up Next counts the episode as watched.
-- **Still watching?** After 5 episodes in a row that started by themselves with no clicks, pauses or seeks (`playback.autoplay_limit`), the card asks instead of counting down; with no answer, playback stops at the end of the episode.
-- Prefer your own mpv UI (uosc etc.)? Set `"mpv": {"use_bloom_ui": false}`.
+- **Skip Intro / Skip Credits** appear (even with the controls hidden) while Jellyfin's media segments — or the Intro Skipper plugin, or chapter names — say an intro/credits/recap is playing. In *Settings → Playback*, intros and credits each choose: show a button, skip automatically, or do nothing.
+- **Up Next:** when the credits start (or in the last 20 s; adjustable in Settings) a card shows the next episode with **Play now · 20** counting down and **Cancel**. With AUTO off it waits for you. Reaching Up Next counts the episode as watched.
+- **Still watching?** After 5 episodes in a row that started by themselves with no clicks, pauses or seeks (adjustable, or *Never ask*, in Settings), the card asks instead of counting down; with no answer, playback stops at the end of the episode.
+- Prefer your own mpv UI (uosc etc.)? Turn off *Settings → Player → Bloom controls*.
 
 ### Window shape on Hyprland
 
-Tiling gives a new window whatever slot the layout has, often a tall column. On Hyprland the app floats itself at 16:9 (about 80% of the monitor) and centres itself, using `hyprctl`. To keep it tiled instead, set `"window": {"hyprland_float": false}` in `settings.json`. If you add your own window rule that floats it wide, the app leaves it alone.
+Tiling gives a new window whatever slot the layout has, often a tall column. On Hyprland the app floats itself at 16:9 (about 80% of the monitor) and centres itself, using `hyprctl`. To keep it tiled instead, turn off *Settings → App → Wide floating window on Hyprland*. If you add your own window rule that floats it wide, the app leaves it alone.
+
+## Settings
+
+Everything saves as soon as you change it. Open the page from the bottom of the sidebar; the chips at the top jump to a section.
+
+- **Server & connection:** which server and address you're on (with latency), *Re-check now*, the address list (edit, add, reorder, mark public, **Test** each one, then *Save addresses*), *Never stream video over the public address*, and *Forget server…* (asks "Is this your server?" again; your sign-in is kept).
+- **Account:** switch user, log out, and **approve a Quick Connect code** for another device.
+- **Playback:** autoplay, when Up Next appears (5–60 s), *Still watching?* after 2–10 episodes or never, **intros** and **credits** each as *Show a Skip button / Skip automatically / Do nothing*, resume rewind, and the watched threshold.
+- **Languages:** audio and subtitle languages in order (add, reorder, remove), what to do when the audio is already in a subtitle language (none / forced only / full), and the series with remembered tracks (forget some or all).
+- **Subtitle appearance:** size, bold, font, outline, position and styled-ASS handling, with a live preview. It's the same setting as the player's Aa menu, so a change in either shows up in the other. *Use my mpv.conf instead* drops your changes.
+- **Player:** mpv program (with *Detect* and its version), extra mpv options, use my mpv.conf, Bloom controls, start fullscreen. These apply the next time a video starts.
+- **App:** smooth scrolling (applies at once), wide floating window on Hyprland.
+- **Storage & about:** image-cache size and *Clear*, open the settings folder, install the launcher entry, **Reset all settings** (keeps server, addresses and sign-in), versions, and an in-app **self-check** with *Copy report*.
+
+Settings saved by 0.8 (`playback.skip_mode`) are converted automatically.
 
 ## Files
 

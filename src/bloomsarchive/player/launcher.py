@@ -35,6 +35,20 @@ def find_mpv(configured: str | None) -> str | None:
     return shutil.which(path)
 
 
+def mpv_version(path: str | None) -> str | None:
+    """'mpv v0.41.0' style string from `mpv --version`, or None if it won't run."""
+    import subprocess
+    exe = find_mpv(path)
+    if not exe:
+        return None
+    try:
+        out = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    first = (out or "").strip().splitlines()[:1]
+    return first[0].split(" Copyright")[0].strip() if first else None
+
+
 def _extra(args) -> list[str]:
     if not args:
         return []
@@ -48,7 +62,6 @@ def build_args(mpv_settings: dict, sock: str, script: str | None = None) -> list
     args = [
         "--idle=yes",
         "--force-window=immediate",
-        "--fs",
         f"--input-ipc-server={mpv_ipc_arg(sock)}",
         f"--wayland-app-id={PLAYER_APP_ID}",
         "--title=${media-title}",
@@ -57,6 +70,8 @@ def build_args(mpv_settings: dict, sock: str, script: str | None = None) -> list
         "--resume-playback=no",
         "--save-position-on-quit=no",
     ]
+    if mpv_settings.get("fullscreen", True):
+        args.insert(2, "--fs")
     if not mpv_settings.get("inherit_user_config", True):
         args.append("--no-config")
     if script and mpv_settings.get("use_bloom_ui", True):

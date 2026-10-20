@@ -23,7 +23,7 @@ local function last_seek()
 end
 
 local INFO = [[{"title":"Episode 3","subtitle":"Show · S01E03","is_episode":true,"current_id":"e3",
-  "has_prev":true,"has_next":true,"autoplay":true,"skip_mode":"button","up_next_seconds":20,
+  "has_prev":true,"has_next":true,"autoplay":true,"skip_intro":"button","skip_credits":"button","up_next_seconds":20,
   "still_watching":false,"next":{"id":"e4","label":"S01E04","title":"The Next One"},"seasons":[],"versions":[]}]]
 
 local function new_file(info)
@@ -125,7 +125,7 @@ local sk2 = last_seek()
 check(sk2 and tonumber(sk2[2]) == 1440, "Skip Credits on the last episode seeks to the end")
 
 -- ---------------------------------------------------------------- auto-skip mode
-new_file(INFO:gsub('"skip_mode":"button"', '"skip_mode":"auto"'))
+new_file(INFO:gsub('"skip_intro":"button","skip_credits":"button"', '"skip_intro":"auto","skip_credits":"auto"'))
 local before = #M.commands
 M.set("time-pos", 92)
 M.advance(0.05)
@@ -153,6 +153,35 @@ M.advance(0.05)
 local sb = find_hit("skip")
 local seek = find_hit("seek")
 check(sb and seek and sb.y2 < seek.y1, "skip button sits above the seek bar when controls are shown")
+
+-- ---------------------------------------------------------------- separate modes: intros auto, credits off
+new_file(INFO:gsub('"skip_intro":"button","skip_credits":"button"', '"skip_intro":"auto","skip_credits":"off"')
+    :gsub('"next":{[^}]*}', '"next":null'):gsub('"has_next":true', '"has_next":false'))
+local na = #sent_all("bloom-autoskip")
+M.set("time-pos", 95)
+M.advance(0.05)
+check(#sent_all("bloom-autoskip") == na + 1, "intro auto-skips while credits are off")
+M.set("time-pos", 1330)
+M.advance(0.05)
+check(M.overlay.data:find("Skip Credits", 1, true) == nil, "credits off: no button")
+check(#sent_all("bloom-autoskip") == na + 1, "credits off: no auto-skip")
+
+-- intros off, credits button
+new_file(INFO:gsub('"skip_intro":"button"', '"skip_intro":"off"')
+    :gsub('"next":{[^}]*}', '"next":null'):gsub('"has_next":true', '"has_next":false'))
+M.set("time-pos", 95)
+M.advance(0.05)
+check(M.overlay.data:find("Skip Intro", 1, true) == nil, "intros off: no Skip Intro")
+M.set("time-pos", 1330)
+M.advance(0.05)
+check(M.overlay.data:find("Skip Credits", 1, true) ~= nil, "credits still get their button")
+
+-- an older app that only sends skip_mode still works
+new_file(INFO:gsub('"skip_intro":"button","skip_credits":"button"', '"skip_mode":"auto"'))
+local nb = #sent_all("bloom-autoskip")
+M.set("time-pos", 95)
+M.advance(0.05)
+check(#sent_all("bloom-autoskip") == nb + 1, "legacy skip_mode is honoured")
 
 print(string.format("%d passed, %d failed", passed, failures))
 os.exit(failures == 0 and 0 or 1)

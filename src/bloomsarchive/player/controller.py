@@ -32,6 +32,14 @@ OBSERVED = ("time-pos", "duration", "pause", "aid", "sid", "track-list", "eof-re
 STYLE_PROPS = ("sub-scale", "sub-bold", "sub-font", "sub-border-size", "sub-pos", "sub-ass-override")
 
 
+
+def _limit(settings) -> int:
+    """Episodes in a row before "Still watching?"; 0 = never ask."""
+    try:
+        return max(0, int(settings.get("playback.autoplay_limit", 5)))
+    except (TypeError, ValueError):
+        return 5
+
 class PlaybackController(QObject):
     state_changed = Signal(str)
     error = Signal(str)                     # user-facing message
@@ -58,7 +66,7 @@ class PlaybackController(QObject):
         self._seasons: list[Item] = []
         self._episodes: list[Item] = []
         self._segments: list = []
-        self._chain = overlay_info.AutoplayChain(int(session.settings.get("playback.autoplay_limit", 5) or 5))
+        self._chain = overlay_info.AutoplayChain(_limit(session.settings))
         self._no_autoplay_for: str | None = None     # "Cancel" on the Up Next card
         self._advancing = False
         self._file_started_at = 0.0
@@ -95,10 +103,7 @@ class PlaybackController(QObject):
             src = next((s for s in item.media_sources if s.id == req.source_id), item.media_sources[0])
             audio, sub = req.audio_index, req.subtitle_index
             if audio is None or sub is None:
-                langs = settings.get("languages", {}) or {}
-                remembered = settings.get(f"series_tracks.{item.series_id}") if item.series_id else None
-                choice = tracks.default_choice(item, list(langs.get("audio") or []),
-                                               list(langs.get("subtitle") or []), remembered, src.id)
+                choice = tracks.choice_from_settings(item, settings, src.id)
                 audio = choice.audio_index if audio is None else audio
                 sub = choice.subtitle_index if sub is None else sub
             r = Resolved(item, src, audio, sub, req.start_seconds)
@@ -352,11 +357,12 @@ class PlaybackController(QObject):
         if ps is None or ipc is None:
             return
         st = self.session.settings
-        self._chain.limit = max(1, int(st.get("playback.autoplay_limit", 5) or 5))
+        self._chain.limit = _limit(st)
         autoplay = bool(st.get("playback.autoplay", True)) and self._no_autoplay_for != ps.item.id
         info = overlay_info.build_info(
             ps.item, ps.source, self._seasons, self._episodes, autoplay,
-            skip_mode=st.get("playback.skip_mode", "button") or "button",
+            skip_intro=st.get("playback.skip_intro", "button") or "button",
+            skip_credits=st.get("playback.skip_credits", "button") or "button",
             up_next_seconds=int(st.get("playback.up_next_seconds", 20) or 20),
             still_watching=self._chain.should_ask)
         ipc.command("script-message-to", "bloom", "bloom-info", json.dumps(info))
@@ -457,7 +463,8 @@ class PlaybackController(QObject):
         if ps is None or not ps.item.series_id:
             return
         self.session.settings.set(f"series_tracks.{ps.item.series_id}",
-                                  tracks.memory_for(ps.source, ps.audio_index, ps.subtitle_index))
+                                  tracks.memory_for(ps.source, ps.audio_index, ps.subtitle_index,
+                                                    ps.item.series_name or None))
 
     def _remember_style(self, prop: str, value) -> None:
         saved = dict(self.session.settings.get("subtitles.saved", {}) or {})

@@ -90,9 +90,10 @@ class Phase8Info(IsolatedTest):
         eps = details.episodes(c, "series-1")
         ep = details.get_item(c, "ep-3")
         info = overlay_info.build_info(ep, ep.media_sources[0], details.seasons(c, "series-1"), eps,
-                                       autoplay=True, skip_mode="auto", up_next_seconds=15, still_watching=True)
+                                       autoplay=True, skip_intro="auto", skip_credits="off", up_next_seconds=15, still_watching=True)
         self.assertEqual(info["next"], {"id": "s2-ep-1", "label": "S02E01", "title": "Second 1"})
-        self.assertEqual((info["skip_mode"], info["up_next_seconds"], info["still_watching"]), ("auto", 15, True))
+        self.assertEqual((info["skip_intro"], info["skip_credits"], info["up_next_seconds"], info["still_watching"]),
+                         ("auto", "off", 15, True))
         last = details.get_item(c, "s2-ep-2")
         self.assertIsNone(overlay_info.build_info(last, last.media_sources[0], [], eps, True)["next"])
 

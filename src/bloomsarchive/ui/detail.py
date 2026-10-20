@@ -440,14 +440,6 @@ class DetailPage(Page):
             self.restart_btn.setVisible(resume)
 
     # ================================================================== tracks
-    def _prefs(self) -> tuple[list[str], list[str]]:
-        langs = self.session.settings.get("languages", {}) or {}
-        return list(langs.get("audio") or []), list(langs.get("subtitle") or [])
-
-    def _remembered(self) -> dict | None:
-        sid = self.item.series_id if self.item.type == "Episode" else None
-        return self.session.settings.get(f"series_tracks.{sid}") if sid else None
-
     def _source(self) -> MediaSource | None:
         it = self.item
         if not it.media_sources:
@@ -458,8 +450,7 @@ class DetailPage(Page):
     def _setup_tracks(self) -> None:
         keep = self.choice is not None and any(s.id == self.choice.source_id for s in self.item.media_sources)
         if not keep:                      # first load; a quiet refresh keeps your picks
-            a, s = self._prefs()
-            self.choice = tracks.default_choice(self.item, a, s, self._remembered())
+            self.choice = tracks.choice_from_settings(self.item, self.session.settings)
         self._populate_tracks()
         self.pickers.show()
 
@@ -502,8 +493,7 @@ class DetailPage(Page):
 
     def _version_changed(self, _i: int) -> None:
         sid = self.version_cb.currentData()
-        a, s = self._prefs()
-        self.choice = tracks.default_choice(self.item, a, s, self._remembered(), source_id=sid)
+        self.choice = tracks.choice_from_settings(self.item, self.session.settings, source_id=sid)
         self._populate_tracks()
 
     def _tracks_changed(self, _i: int) -> None:
@@ -516,7 +506,8 @@ class DetailPage(Page):
         src = self._source()
         if sid and src is not None:
             self.session.settings.set(f"series_tracks.{sid}",
-                                      tracks.memory_for(src, audio, self.choice.subtitle_index))
+                                      tracks.memory_for(src, audio, self.choice.subtitle_index,
+                                                        self.item.series_name or None))
 
     # ================================================================== play
     def _play(self, restart: bool) -> None:

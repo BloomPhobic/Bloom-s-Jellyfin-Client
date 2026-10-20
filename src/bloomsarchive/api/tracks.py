@@ -123,7 +123,7 @@ def pick_audio(src: MediaSource, preferred: list[str], remembered: str | None) -
 
 
 def pick_subtitle(src: MediaSource, audio_lang: str | None, preferred: list[str],
-                  remembered: dict | None) -> int:
+                  remembered: dict | None, when_audio_matches: str = "forced") -> int:
     subs = src.subtitle_streams
     if not subs:
         return OFF
@@ -138,8 +138,10 @@ def pick_subtitle(src: MediaSource, audio_lang: str | None, preferred: list[str]
                 pick = next((s for s in match if s.is_forced == forced), match[0])
                 return pick.index
 
-    # Audio already in a language you read: only forced subs (signs/foreign lines), if any.
-    if audio_lang and any(_same_lang(audio_lang, p) for p in preferred):
+    # Audio already in a language you read: by default only forced subs (signs/foreign lines).
+    if audio_lang and any(_same_lang(audio_lang, p) for p in preferred) and when_audio_matches != "always":
+        if when_audio_matches == "off":
+            return OFF
         forced = next((s for s in subs if s.is_forced and _same_lang(_lang(s), audio_lang)), None)
         return forced.index if forced else OFF
 
@@ -156,7 +158,8 @@ def pick_subtitle(src: MediaSource, audio_lang: str | None, preferred: list[str]
 
 
 def default_choice(item: Item, preferred_audio: list[str], preferred_subs: list[str],
-                   remembered: dict | None = None, source_id: str | None = None) -> TrackChoice:
+                   remembered: dict | None = None, source_id: str | None = None,
+                   when_audio_matches: str = "forced") -> TrackChoice:
     if not item.media_sources:
         return TrackChoice(None, None, OFF)
     src = next((s for s in item.media_sources if s.id == source_id), item.media_sources[0])
@@ -164,17 +167,26 @@ def default_choice(item: Item, preferred_audio: list[str], preferred_subs: list[
     a = pick_audio(src, preferred_audio, rem.get("audio_lang"))
     audio_lang = next((_lang(s) for s in src.audio_streams if s.index == a), None)
     sub_mem = rem.get("subtitle") if isinstance(rem.get("subtitle"), dict) else None
-    sub = pick_subtitle(src, audio_lang, preferred_subs, sub_mem)
+    sub = pick_subtitle(src, audio_lang, preferred_subs, sub_mem, when_audio_matches)
     return TrackChoice(src.id, a, sub)
 
 
-def memory_for(src: MediaSource, audio_index: int | None, subtitle_index: int) -> dict:
+def choice_from_settings(item: Item, settings, source_id: str | None = None) -> TrackChoice:
+    """default_choice with the user's language settings and this series' memory."""
+    langs = settings.get("languages", {}) or {}
+    remembered = settings.get(f"series_tracks.{item.series_id}") if item.series_id else None
+    return default_choice(item, list(langs.get("audio") or []), list(langs.get("subtitle") or []),
+                          remembered, source_id, langs.get("subs_when_audio_matches", "forced") or "forced")
+
+
+def memory_for(src: MediaSource, audio_index: int | None, subtitle_index: int, name: str | None = None) -> dict:
     """What to remember for a series: languages, not indexes (they differ per file)."""
     audio = next((s for s in src.audio_streams if s.index == audio_index), None)
     sub = next((s for s in src.subtitle_streams if s.index == subtitle_index), None)
     return {
         "audio_lang": _lang(audio) if audio else None,
         "subtitle": {"off": True} if sub is None else {"lang": _lang(sub), "forced": sub.is_forced},
+        **({"name": name} if name else {}),
     }
 
 

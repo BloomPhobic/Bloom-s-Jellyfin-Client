@@ -45,7 +45,7 @@ class AutoplayChain:
     """
 
     def __init__(self, limit: int = 5):
-        self.limit = max(1, int(limit or 5))
+        self.limit = max(0, int(limit if limit is not None else 5))
         self.count = 0
 
     def interaction(self) -> None:
@@ -56,8 +56,8 @@ class AutoplayChain:
 
     @property
     def should_ask(self) -> bool:
-        """True when the *next* automatic start would exceed the limit."""
-        return self.count + 1 >= self.limit
+        """True when the *next* automatic start would exceed the limit (never if limit is 0)."""
+        return self.limit > 0 and self.count + 1 >= self.limit
 
 
 def segments_for_lua(segments) -> list[dict]:
@@ -65,8 +65,8 @@ def segments_for_lua(segments) -> list[dict]:
 
 
 def build_info(item: Item, source: MediaSource | None, seasons: list[Item], episodes: list[Item],
-               autoplay: bool, skip_mode: str = "button", up_next_seconds: int = 20,
-               still_watching: bool = False) -> dict:
+               autoplay: bool, skip_intro: str = "button", skip_credits: str = "button",
+               up_next_seconds: int = 20, still_watching: bool = False) -> dict:
     is_ep = item.type == "Episode"
     if is_ep:
         bits = [b for b in (item.series_name, item.episode_label) if b]
@@ -110,7 +110,8 @@ def build_info(item: Item, source: MediaSource | None, seasons: list[Item], epis
 
     return {
         "next": nxt_info,
-        "skip_mode": skip_mode if skip_mode in ("button", "auto") else "button",
+        "skip_intro": skip_intro if skip_intro in ("button", "auto", "off") else "button",
+        "skip_credits": skip_credits if skip_credits in ("button", "auto", "off") else "button",
         "up_next_seconds": int(up_next_seconds or 20),
         "still_watching": bool(still_watching),
         "title": item.name,

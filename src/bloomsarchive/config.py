@@ -42,6 +42,7 @@ DEFAULTS: dict[str, Any] = {
         "extra_args": [],
         "inherit_user_config": True,
         "use_bloom_ui": True,
+        "fullscreen": True,         # start the player fullscreen
     },
     "subtitles": {
         "scale": 1.0,
@@ -52,17 +53,26 @@ DEFAULTS: dict[str, Any] = {
         "color": "",
         "ass_override": "scale",   # no | scale | force
     },
-    "languages": {"audio": ["jpn", "eng"], "subtitle": ["eng"]},
+    "languages": {
+        "audio": ["jpn", "eng"],
+        "subtitle": ["eng"],
+        # when the audio is already in one of your subtitle languages: off | forced | always
+        "subs_when_audio_matches": "forced",
+    },
     "playback": {
         "autoplay": True,
-        "autoplay_limit": 5,
+        "autoplay_limit": 5,          # "Still watching?" after this many; 0 = never ask
         "up_next_seconds": 20,
-        "skip_mode": "button",       # button | auto
+        "skip_intro": "button",       # button | auto | off   (intros, recaps, previews)
+        "skip_credits": "button",     # button | auto | off
         "resume_rewind_seconds": 5,
         "played_threshold_pct": 90,
     },
     "window": {
         "hyprland_float": True,     # float the main window wide and centred on Hyprland
+    },
+    "ui": {
+        "smooth_scroll": True,
     },
     "library_state": {},   # per-library sort/filter
     "series_tracks": {},   # per-series audio/subtitle memory
@@ -115,6 +125,20 @@ def _deep_merge(base: dict, over: dict) -> dict:
     return out
 
 
+def _migrate(raw: dict) -> None:
+    """Upgrade settings written by older versions, in place."""
+    pb = raw.get("playback")
+    if isinstance(pb, dict) and "skip_mode" in pb:
+        legacy = pb.pop("skip_mode")
+        mode = legacy if legacy in ("button", "auto") else "button"
+        pb.setdefault("skip_intro", mode)
+        pb.setdefault("skip_credits", mode)
+
+
+# Kept by "Reset all settings": your server, addresses and sign-in.
+KEEP_ON_RESET = ("addresses", "server_id", "last_address", "device_id", "last_user", "tokens")
+
+
 class Settings:
     """Thread-safe settings with dotted-path access: s.get("playback.autoplay")."""
 
@@ -130,6 +154,7 @@ class Settings:
             try:
                 raw = json.loads(self.path.read_text(encoding="utf-8"))
                 if isinstance(raw, dict):
+                    _migrate(raw)
                     self._data = _deep_merge(DEFAULTS, raw)
             except FileNotFoundError:
                 pass
@@ -178,6 +203,16 @@ class Settings:
     def data(self) -> dict[str, Any]:
         with self._lock:
             return copy.deepcopy(self._data)
+
+    def reset_preferences(self) -> None:
+        """Back to defaults for everything except the connection and sign-in."""
+        with self._lock:
+            kept = {k: copy.deepcopy(self._data.get(k)) for k in KEEP_ON_RESET}
+            self._data = copy.deepcopy(DEFAULTS)
+            for k, v in kept.items():
+                if v is not None:
+                    self._data[k] = v
+            self.save()
 
     # -- identity
     def device_id(self) -> str:

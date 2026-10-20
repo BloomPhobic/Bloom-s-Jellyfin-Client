@@ -730,6 +730,14 @@ local function active_segment()
     end
 end
 
+-- "button" | "auto" | "off", chosen separately for intros (Intro/Recap/Preview) and credits (Outro)
+local function skip_mode_for(seg)
+    local m = seg.type == "Outro" and S.info.skip_credits or S.info.skip_intro
+    if m == nil then m = S.info.skip_mode end              -- older app versions sent one mode for both
+    if m ~= "auto" and m ~= "off" then m = "button" end
+    return m
+end
+
 local function card_state()
     local nxt = S.info.next
     if not nxt or S.file.cancelled then return nil end
@@ -827,12 +835,15 @@ local function render()
     S.hits = {}
     local seg = active_segment()
     local card = card_state()
-    if seg and S.info.skip_mode == "auto" then              -- auto-skip once per segment
+    local mode = seg and skip_mode_for(seg)
+    if mode == "auto" then                                   -- auto-skip once per segment
         local key = seg.type .. ":" .. tostring(seg.start)
         if not S.file.skipped[key] then
             S.file.skipped[key] = true
             skip_segment(seg, true)
         end
+        seg = nil
+    elseif mode == "off" then
         seg = nil
     end
     if not S.visible and not card and not seg then
@@ -1010,7 +1021,7 @@ mp.register_script_message("bloom-info", function(json)
         -- (e.g. the previous episode's "next") must not survive
         S.info = { title = "", subtitle = "", has_prev = false, has_next = false, favorite = false,
                    autoplay = true, is_episode = false, seasons = {}, versions = {}, current_id = "",
-                   next = nil, skip_mode = "button", up_next_seconds = 20, still_watching = false }
+                   next = nil, up_next_seconds = 20, still_watching = false }
         for k, v in pairs(info) do S.info[k] = v end
         if S.menu then refresh_menu() end
         dirty = true

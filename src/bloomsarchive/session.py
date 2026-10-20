@@ -86,6 +86,25 @@ class Session:
         self.settings.set("last_address", d.chosen.candidate.url)
         d.needs_pin = False
 
+    def forget_server(self) -> None:
+        """Unpin: the next connect asks "Is this your server?" again.
+
+        Stored tokens stay (keyed by ServerId), so re-pinning the same server
+        signs you straight back in.
+        """
+        with self._lock:
+            self.settings.set("server_id", None)
+            self.settings.set("last_address", None)
+            self.client.token = self.client.user_id = None
+            self.user = None
+            self.discovery = None
+
+    def set_addresses(self, addresses: list[dict]) -> None:
+        self.settings.set("addresses", addresses)
+        last = self.settings.get("last_address")
+        if last and last not in [a.get("url") for a in addresses]:
+            self.settings.set("last_address", None)
+
     @property
     def server_id(self) -> str | None:
         return self.settings.get("server_id")
