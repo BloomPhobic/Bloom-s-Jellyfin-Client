@@ -70,6 +70,9 @@ def run(settings: Settings | None = None, out: TextIO = sys.stdout, user: str | 
     # ------------------------------------------------------------------ discovery
     r.head("Address selection")
     cands = Candidate.from_settings(settings.get("addresses", []))
+    if not cands:
+        r.warn(f"no server addresses yet — start the app once to enter one, or add them to {settings.path}")
+        return _finish(r)
     net = settings.get("network", {})
     d = discover(cands, pinned, device_id,
                  private_timeout=net.get("probe_timeout_private", 1.5),

@@ -83,6 +83,17 @@ def validate_addresses(rows: list[AddressRow]) -> tuple[list[dict], str]:
     return out, ""
 
 
+def first_address(url: str) -> tuple[dict | None, str]:
+    """The address typed on the first-run screen → an addresses entry, or (None, error)."""
+    rows, err = validate_addresses([AddressRow("", url, guess_public(url))])
+    if err:
+        return None, ("Type your server's address, e.g. http://192.168.1.50:8096"
+                      if "at least one" in err else err)
+    a = rows[0]
+    a["label"] = "Public" if a["public"] else "Home"
+    return a, ""
+
+
 def guess_public(url: str) -> bool:
     """New addresses: anything that isn't LAN/Tailscale/loopback counts as public."""
     u = normalize_base_url(url)

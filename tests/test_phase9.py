@@ -123,6 +123,28 @@ class SkipInfo(IsolatedTest):
         json.dumps(info)
 
 
+class FirstRun(IsolatedTest):
+    def test_no_addresses_until_you_add_one(self):
+        s = Session(self.settings, self.tokens)
+        self.assertEqual(s.candidates(), [])
+        d = s.connect()
+        self.assertIsNone(d.chosen)
+        srv = self.serve()
+        addr, _ = prefs.first_address(srv.url)
+        s.set_addresses([addr])
+        d = s.connect()
+        self.assertTrue(d.chosen and d.needs_pin, "found; asks to pin")
+
+    def test_selfcheck_without_addresses(self):
+        import io
+
+        from bloomsarchive import selfcheck
+        out = io.StringIO()
+        code = selfcheck.run(self.settings, out=out, interactive=False)
+        self.assertNotEqual(code, 0)
+        self.assertIn("no server addresses yet", out.getvalue())
+
+
 class SessionHelpers(IsolatedTest):
     def test_forget_server(self):
         srv = self.serve()
@@ -221,6 +243,16 @@ class Prefs(unittest.TestCase):
         text = (ROOT / "src/bloomsarchive/player/controller.py").read_text()
         props = re.search(r"STYLE_PROPS = \((.*?)\)", text).group(1)
         self.assertEqual(set(re.findall(r'"([^"]+)"', props)), set(prefs.STYLE_DEFAULTS))
+
+    def test_first_run_address(self):
+        a, err = prefs.first_address("192.168.1.50:8096")
+        self.assertEqual((a, err), ({"label": "Home", "url": "http://192.168.1.50:8096", "public": False}, ""))
+        a, _ = prefs.first_address("https://jellyfin.example.com/")
+        self.assertEqual((a["label"], a["public"]), ("Public", True))
+        a, err = prefs.first_address("  ")
+        self.assertIsNone(a)
+        self.assertIn("e.g.", err)
+        self.assertIsNone(prefs.first_address("ftp://nope")[0])
 
     def test_bytes(self):
         self.assertEqual(prefs.human_bytes(512), "512 B")

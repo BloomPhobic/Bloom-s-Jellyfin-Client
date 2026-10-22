@@ -2,7 +2,16 @@
 
 A desktop client for [Jellyfin](https://jellyfin.org) media servers. Browse with a PySide6 UI and play through [mpv](https://mpv.io), **direct play only**: the server sends the original file and never transcodes, so even a modest server can stream anything it stores.
 
-## Status
+Linux first (tested on Arch with Hyprland and other Wayland/X11 desktops); needs Jellyfin 10.8 or newer.
+
+**Highlights**
+- Home rows, library grids with sort/filters/A–Z jump, live search and detail pages
+- Plays the original file in mpv: no transcoding, your own mpv.conf, your audio/subtitle choices remembered per series
+- On-screen controls inside mpv, Skip Intro/Credits, Up Next with countdown, "Still watching?"
+- Several server addresses (home, VPN, public) with automatic fail-over, pinned to your server's ID
+- Optionally refuses to stream video over the public address, so a slow tunnel is only used for browsing
+
+## Build phases
 
 | Phase | What | State |
 |---|---|---|
@@ -34,7 +43,25 @@ Other distributions: install mpv and PySide6 6.5 or newer from your package mana
 
 Other distributions: install mpv and PySide6 6.5 or newer from your package manager (or `pip install PySide6` inside the venv).
 
+Other distributions: install mpv and PySide6 6.5 or newer from your package manager (or `pip install PySide6` inside the venv).
+
 The API layer is standard-library only, so `--selfcheck` works even without PySide6.
+
+## Point it at your server
+
+On first start the app asks for your server's address, for example `http://192.168.1.50:8096` at home or `https://jellyfin.example.com`, then asks you to confirm it's your server.
+
+You can give it more than one address in *Settings → Server & connection* (or `addresses` in `~/.config/bloomsarchive/settings.json`). They're tried in order and the first that answers wins, so one list works at home, over a VPN like Tailscale, and away:
+
+```json
+"addresses": [
+  {"label": "Home LAN",  "url": "http://192.168.1.50:8096",     "public": false},
+  {"label": "Tailscale", "url": "http://100.64.0.10:8096",      "public": false},
+  {"label": "Public",    "url": "https://jellyfin.example.com", "public": true}
+]
+```
+
+`"public": true` marks an address reached over the internet: it's tried last with a longer timeout, and by default video won't stream over it, so a slow or metered tunnel is only used for browsing.
 
 ## Point it at your server
 
@@ -178,9 +205,13 @@ Settings saved by 0.8 (`playback.skip_mode`) are converted automatically.
 ```sh
 python tests/mock_jellyfin.py --port 8096            # fake server: Alice/hunter2, Guest/blank, Hidden/secret
 # try the app against it without touching your real settings:
-BLOOMSARCHIVE_CONFIG_DIR=/tmp/ba-mock bloomsarchive   # then set the LAN address to http://127.0.0.1:8096 in /tmp/ba-mock/settings.json
+BLOOMSARCHIVE_CONFIG_DIR=/tmp/ba-mock bloomsarchive   # then enter http://127.0.0.1:8096 on the first-run screen
 python tests/mock_jellyfin.py --port 8096 --legacy --version 10.8.13
 cd tests && python -m unittest                       # or: pytest
 ```
 
 The mock logs every request, and the tests assert that no HLS or non-static stream URL is ever requested.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Not affiliated with the Jellyfin project.

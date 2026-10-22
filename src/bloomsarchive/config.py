@@ -20,11 +20,12 @@ from . import APP_ID
 
 log = logging.getLogger(__name__)
 
-DEFAULT_ADDRESSES = [
-    {"label": "Home LAN", "url": "http://192.168.1.50:8096", "public": False},
-    {"label": "Tailscale", "url": "http://100.64.0.10:8096", "public": False},
-    {"label": "Public", "url": "https://jellyfin.example.com", "public": True},
-]
+# Empty until the first run asks for your server (or edit them in Settings → Server).
+# Example entries:
+#   {"label": "Home LAN",  "url": "http://192.168.1.50:8096",     "public": False}
+#   {"label": "Tailscale", "url": "http://100.64.0.10:8096",      "public": False}
+#   {"label": "Public",    "url": "https://jellyfin.example.com", "public": True}
+DEFAULT_ADDRESSES: list[dict] = []
 
 DEFAULTS: dict[str, Any] = {
     "addresses": DEFAULT_ADDRESSES,

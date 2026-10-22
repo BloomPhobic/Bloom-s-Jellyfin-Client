@@ -64,7 +64,7 @@ class Helpers(unittest.TestCase):
 class Config(IsolatedTest):
     def test_defaults_and_persist(self):
         s = self.settings
-        self.assertEqual(s.get("addresses")[0]["url"], "http://192.168.1.50:8096")
+        self.assertEqual(s.get("addresses"), [], "no built-in server: the first run asks")
         self.assertTrue(s.get("mpv.inherit_user_config"))
         s.set("playback.autoplay", False)
         did = s.device_id()
