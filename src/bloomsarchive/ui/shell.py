@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu,
+from PySide6.QtWidgets import (QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
                                QPushButton, QToolButton, QVBoxLayout, QWidget)
 
 from .. import APP_NAME
@@ -21,13 +21,17 @@ from .detail import DetailPage
 from .home import HomePage
 from .library import LibraryPage
 from .search import SearchPage
+from .quickconnect import QuickConnectPage
+from .servers import AddServerDialog, fill_server_menu
 from .settings import SettingsPage
+from . import theme
 from .nav import NavStack, Page, PlaceholderPage
 from .widgets.image_loader import ImageLoader
 from .widgets.toast import Toast
 from .workers import run_async
 
 SIDEBAR_WIDTH = 224
+SIDEBAR_MAX = 300
 UNSUPPORTED_LIBRARIES = {"music", "books", "photos", "livetv", "playlists", "homevideos", "musicvideos"}
 
 
@@ -44,6 +48,7 @@ class Shell(QWidget):
     switch_user = Signal()
     log_out = Signal()
     forget_server = Signal()
+    switch_server = Signal(str)        # saved-server key
 
     def __init__(self, session: Session, loader: ImageLoader, parent: QWidget | None = None):
         super().__init__(parent)
@@ -134,9 +139,12 @@ class Shell(QWidget):
         menu = QMenu(self.user_btn)
         act_switch = QAction("Switch user", self)
         act_switch.triggered.connect(self.switch_user.emit)
+        self.server_menu = QMenu("Switch server", menu)
+        self.server_menu.aboutToShow.connect(self._fill_server_menu)
         act_logout = QAction("Log out", self)
         act_logout.triggered.connect(self.log_out.emit)
         menu.addAction(act_switch)
+        menu.addMenu(self.server_menu)
         menu.addSeparator()
         menu.addAction(act_logout)
         self.user_btn.setMenu(menu)
@@ -146,7 +154,9 @@ class Shell(QWidget):
     def _build_sidebar(self) -> QWidget:
         side = QFrame()
         side.setProperty("role", "sidebar")
+        self.sidebar = side
         side.setFixedWidth(SIDEBAR_WIDTH)
+        theme.notifier().changed.connect(self._fit_sidebar)
         self.side = QVBoxLayout(side)
         self.side.setContentsMargins(12, 16, 12, 16)
         self.side.setSpacing(2)
@@ -169,12 +179,43 @@ class Shell(QWidget):
         self.side.addLayout(self.lib_box)
         self.side.addStretch()
 
+        self.btn_qc = _nav_button("Quick Connect", "quickconnect")
+        self.btn_qc.setToolTip("Approve a code to sign in another device")
+        self.btn_qc.clicked.connect(self._open_quick_connect)
+        self.side.addWidget(self.btn_qc)
         self.btn_settings = _nav_button("Settings", "settings")
         self.btn_settings.clicked.connect(self._open_settings)
         self.side.addWidget(self.btn_settings)
-        for b in (self.btn_home, self.btn_favs, self.btn_settings):
+        for b in (self.btn_home, self.btn_favs, self.btn_qc, self.btn_settings):
             self.nav_group.addButton(b)
+        self._fit_sidebar()
         return side
+
+    def _fit_sidebar(self) -> None:
+        """Wide enough for the longest entry at the current text size (library names aren't cut off)."""
+        m = self.side.contentsMargins()
+        widest = max((b.sizeHint().width() for b in self.nav_group.buttons()), default=0)
+        self.sidebar.setFixedWidth(max(SIDEBAR_WIDTH, min(SIDEBAR_MAX, widest + m.left() + m.right() + 4)))
+
+    def _fill_server_menu(self) -> None:
+        fill_server_menu(self.server_menu, self.session, self.switch_server.emit)
+        self.server_menu.addSeparator()
+        add = QAction("Add a server…", self.server_menu)
+        add.triggered.connect(self.add_server)
+        self.server_menu.addAction(add)
+
+    def add_server(self) -> None:
+        dlg = AddServerDialog(self.session, self)
+        if dlg.exec() and dlg.result_key:
+            entry = next((s for s in self.session.servers() if s.get("key") == dlg.result_key), {})
+            name = self.session.server_name(entry)
+            ans = QMessageBox.question(self, "Server added", f"Switch to {name} now?",
+                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                       QMessageBox.StandardButton.Yes)
+            if ans == QMessageBox.StandardButton.Yes:
+                self.switch_server.emit(dlg.result_key)
+            else:
+                self.toast.show_message(f"Added {name}. Switch to it from your name menu or Settings.")
 
     def _set_views(self, views: list[Item]) -> None:
         if [v.id for v in views] == [v.id for v in self._views]:
@@ -190,6 +231,7 @@ class Shell(QWidget):
             b.clicked.connect(lambda _=False, view=v: self.open_view(view))
             self.nav_group.addButton(b)
             self.lib_box.addWidget(b)
+        self._fit_sidebar()
         self._nav_changed()
 
     def _nav_changed(self) -> None:
@@ -209,6 +251,12 @@ class Shell(QWidget):
             self.nav_group.setExclusive(True)
 
     # ================================================================== navigation
+    def forget_user(self) -> None:
+        """Another server is coming: drop this one's libraries. set_user() then clears Home
+        and the history before anything loads from the new server."""
+        self._user_id = None
+        self._set_views([])
+
     def set_user(self, user: User) -> None:
         self.user_btn.setText(f"{user.name}  ▾")
         if user.id != self._user_id:
@@ -305,8 +353,15 @@ class Shell(QWidget):
         page.switch_user.connect(self.switch_user.emit)
         page.log_out.connect(self.log_out.emit)
         page.forget_server.connect(self.forget_server.emit)
+        page.switch_server.connect(self.switch_server.emit)
+        page.add_server.connect(self.add_server)
         page.toast.connect(lambda msg, err: self.toast.show_message(msg, error=err, ms=5000 if err else 2800))
         self.nav.push(page)
+
+    def _open_quick_connect(self) -> None:
+        if isinstance(self.nav.current, QuickConnectPage):
+            return
+        self.nav.push(QuickConnectPage(self.session))
 
     def _search_page(self) -> SearchPage:
         cur = self.nav.current

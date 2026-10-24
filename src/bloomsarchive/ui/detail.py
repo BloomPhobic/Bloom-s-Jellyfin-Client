@@ -20,6 +20,7 @@ from ..api.models import Item, MediaSource
 from ..api.tracks import OFF, PlayRequest, TrackChoice
 from ..display import has_resume, is_watched, overview_html, year_of
 from ..session import Session
+from . import theme
 from .actions import ItemActions
 from .nav import Page
 from .widgets import smooth
@@ -180,15 +181,9 @@ class DetailPage(Page):
         self.fav_btn = _button("♡  Favourite", "toggle", checkable=True)
         self.fav_btn.clicked.connect(lambda: self.actions.toggle_favorite(self.item))
         for b in (self.play_btn, self.restart_btn, self.watched_btn, self.fav_btn):
-            b.setFixedHeight(ACTION_H)
             acts.addWidget(b)
-        # Toggles keep one width whatever their label says, so clicking never resizes them.
-        for b, texts in ((self.watched_btn, ("✓  Mark watched", "✓  Watched", "↺  Mark unwatched")),
-                         (self.fav_btn, ("♡  Favourite", "♥  Favourite"))):
-            fm = b.fontMetrics()
-            b.setFixedWidth(max(ACTION_MIN_W, max(fm.horizontalAdvance(t) for t in texts) + 48))
-        self.play_btn.setMinimumWidth(ACTION_MIN_W)
-        self.restart_btn.setMinimumWidth(ACTION_MIN_W)
+        self._fit_actions()
+        theme.notifier().changed.connect(self._fit_actions)
         acts.addStretch()
         info.addLayout(acts)
 
@@ -587,3 +582,16 @@ class DetailPage(Page):
         if self._stale:
             self._stale = False
             self.load()
+
+    def _fit_actions(self) -> None:
+        """Action button sizes, recomputed when the text size changes."""
+        h = max(ACTION_H, theme.px(ACTION_H))
+        for b in (self.play_btn, self.restart_btn, self.watched_btn, self.fav_btn):
+            b.setFixedHeight(h)
+        # Toggles keep one width whatever their label says, so clicking never resizes them.
+        for b, texts in ((self.watched_btn, ("✓  Mark watched", "✓  Watched", "↺  Mark unwatched")),
+                         (self.fav_btn, ("♡  Favourite", "♥  Favourite"))):
+            fm = b.fontMetrics()
+            b.setFixedWidth(max(ACTION_MIN_W, max(fm.horizontalAdvance(t) for t in texts) + 48))
+        self.play_btn.setMinimumWidth(ACTION_MIN_W)
+        self.restart_btn.setMinimumWidth(ACTION_MIN_W)

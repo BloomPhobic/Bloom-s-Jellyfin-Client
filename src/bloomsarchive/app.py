@@ -51,10 +51,13 @@ class MainWindow(QMainWindow):
             self.stack.addWidget(w)
 
         self.startup.ready.connect(self._on_ready)
+        self.startup.switch_server.connect(self.switch_server)
+        self.login.switch_server.connect(self.switch_server)
         self.login.signed_in.connect(self.show_shell)
         self.shell.switch_user.connect(self._switch_user)
         self.shell.log_out.connect(self._log_out)
         self.shell.forget_server.connect(self._forget_server)
+        self.shell.switch_server.connect(self.switch_server)
 
         self.bridge = SessionBridge(self)
         self.bridge.unauthorized.connect(self._session_ended)
@@ -144,6 +147,19 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.startup)
         self.startup.start()
 
+    def switch_server(self, key: str) -> None:
+        """Change to another saved server: same path as a fresh start."""
+        if key == self.session.active_server_key and self.stack.currentWidget() is self.shell:
+            return
+        self.shell.player.shutdown()
+        self.login.leave()
+        self.stack.setCurrentWidget(self.startup)
+        self.session.switch_server(key)
+        self.shell.forget_user()
+        self.images.forget_failures()
+        self.setWindowTitle(APP_NAME)
+        self.startup.start()
+
     # ------------------------------------------------------------------ 401
     def _on_unauthorized_worker(self) -> None:
         # Runs on whichever worker got the 401.
@@ -161,9 +177,9 @@ def run_app(argv: list[str]) -> int:
     app.setApplicationName(APP_NAME)
     app.setDesktopFileName(APP_ID)      # Wayland app-id; matches bloomsarchive.desktop
     app.setWindowIcon(QIcon.fromTheme("multimedia-video-player"))
-    theme.apply(app)
-
     session = Session()
+    theme.set_text_scale(session.settings.get("ui.text_scale", theme.TEXT_SCALE_DEFAULT))
+    theme.apply(app)
     smooth.ENABLED = bool(session.settings.get("ui.smooth_scroll", True))
     win = MainWindow(session)
     win.show()

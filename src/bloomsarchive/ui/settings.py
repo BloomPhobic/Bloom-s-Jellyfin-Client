@@ -7,6 +7,7 @@ remembered tracks) appear here too.
 """
 from __future__ import annotations
 
+import html
 import io
 import logging
 import platform
@@ -14,22 +15,24 @@ import sys
 from typing import Callable
 
 from PySide6 import __version__ as PYSIDE_VERSION
-from PySide6.QtCore import QPointF, QRectF, Qt, QUrl, Signal, qVersion
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, QUrl, Signal, qVersion
 from PySide6.QtGui import (QBrush, QColor, QDesktopServices, QFont, QFontDatabase, QGuiApplication,
                            QLinearGradient, QPainter, QPainterPath, QPen)
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFrame, QHBoxLayout, QLabel,
-                               QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit,
+from PySide6.QtWidgets import (QApplication, QBoxLayout, QCheckBox, QComboBox, QDoubleSpinBox, QFrame, QHBoxLayout,
+                               QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit,
                                QPushButton, QScrollArea, QSizePolicy, QSpinBox, QVBoxLayout, QWidget)
 
 from .. import APP_ID, __version__, desktop, prefs, selfcheck
-from ..api import auth, details
-from ..api.client import JellyfinError, NotFound, Unauthorized
+from ..api import details
+from ..api.client import JellyfinError, normalize_base_url
 from ..api.discovery import Candidate, probe
 from ..player import launcher
 from ..session import Session
 from . import theme
 from .nav import Page
+from .servers import set_tone
 from .widgets import smooth
+from .widgets.flow import flow_widget
 from .widgets.image_loader import ImageLoader
 from .workers import run_async
 
@@ -68,6 +71,24 @@ def _combo(choices: list[tuple[object, str]], width: int = 260) -> QComboBox:
     return cb
 
 
+def _pill(text: str) -> QLabel:
+    lab = QLabel(text)
+    lab.setProperty("role", "pill")
+    return lab
+
+
+def _esc(text) -> str:
+    return html.escape(str(text or ""))
+
+
+def _clear_layout(layout) -> None:
+    while layout.count():
+        item = layout.takeAt(0)
+        w = item.widget()
+        if w is not None:
+            w.deleteLater()
+
+
 def _set_combo(cb: QComboBox, value) -> None:
     i = cb.findData(value)
     cb.setCurrentIndex(i if i >= 0 else 0)
@@ -95,8 +116,8 @@ class Section(QFrame):
         self.v = QVBoxLayout(self)
         self.v.setContentsMargins(26, 22, 26, 22)
         self.v.setSpacing(14)
-        t = _label(title, "h2")
-        self.v.addWidget(t)
+        self.title_label = _label(title, "h2")
+        self.v.addWidget(self.title_label)
         if blurb:
             self.v.addWidget(_label(blurb, "muted"))
 
@@ -107,9 +128,7 @@ class Section(QFrame):
         text.setSpacing(2)
         text.addWidget(_label(title))
         if help_text:
-            hl = _label(help_text, "muted")
-            hl.setStyleSheet("font-size: 12px;")
-            text.addWidget(hl)
+            text.addWidget(_label(help_text, "hint"))
         h.addLayout(text, 1)
         for w in widgets:
             h.addWidget(w, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -156,11 +175,10 @@ class LanguageList(QWidget):
         self.pick.lineEdit().setPlaceholderText("Add a language…")
         self.pick.setMinimumWidth(190)
         self.add_btn = _button("Add")
-        self.up_btn = _button("↑")
-        self.down_btn = _button("↓")
+        self.up_btn = _button("↑", "icon")
+        self.down_btn = _button("↓", "icon")
         self.rm_btn = _button("Remove")
         for b in (self.up_btn, self.down_btn):
-            b.setFixedWidth(44)
             b.setToolTip("Move up" if b is self.up_btn else "Move down")
         row.addWidget(self.pick, 1)
         for b in (self.add_btn, self.up_btn, self.down_btn, self.rm_btn):
@@ -279,6 +297,8 @@ class SettingsPage(Page):
     switch_user = Signal()
     log_out = Signal()
     forget_server = Signal()
+    switch_server = Signal(str)        # saved-server key
+    add_server = Signal()
     toast = Signal(str, bool)          # message, is_error
 
     def __init__(self, session: Session, loader: ImageLoader, parent: QWidget | None = None):
@@ -373,6 +393,7 @@ class SettingsPage(Page):
         content.setObjectName("root")
         center = QHBoxLayout(content)
         center.setContentsMargins(32, 28, 32, 48)
+        self._center = center
         center.addStretch(1)
         col_w = QWidget()
         col_w.setProperty("role", "plain")
@@ -386,40 +407,136 @@ class SettingsPage(Page):
         self.scroll.setWidget(content)
 
         self.col.addWidget(_label("Settings", "h1"))
-        jump = QHBoxLayout()
-        jump.setSpacing(6)
-        self.col.addLayout(jump)
+        jump_w, jump = flow_widget(6)
+        self.col.addWidget(jump_w)
 
         sections = [
-            ("Server", self._server_section()),
+            ("Servers", self._servers_section()),
+            ("Connection", self._server_section()),
             ("Account", self._account_section()),
             ("Playback", self._playback_section()),
             ("Languages", self._languages_section()),
             ("Subtitles", self._subtitle_section()),
             ("Player", self._player_section()),
             ("App", self._app_section()),
-            ("Storage & about", self._about_section()),
+            ("Storage && about", self._about_section()),
         ]
         for name, sec in sections:
             b = _button(name, "chip")
             b.clicked.connect(lambda _=False, s=sec: self._jump(s))
             jump.addWidget(b)
             self.col.addWidget(sec)
-        jump.addStretch(1)
         self.col.addStretch(1)
+
+    def resizeEvent(self, e) -> None:
+        super().resizeEvent(e)
+        self._fit_width()
+
+    def _fit_width(self) -> None:
+        """Narrow window or big text: slimmer margins, language lists stacked, so nothing is cut off."""
+        w = self.scroll.viewport().width()
+        side = 32 if w >= 900 else 16
+        self._center.setContentsMargins(side, 28, side, 48)
+        need = (sum(ll.minimumSizeHint().width() for ll in self._lang_lists) + 24   # side by side
+                + 2 * 26 + 2 * side)                                                  # card + page margins
+        want = QBoxLayout.Direction.LeftToRight if w >= need else QBoxLayout.Direction.TopToBottom
+        if self._lang_grid.direction() != want:
+            self._lang_grid.setDirection(want)
 
     def _jump(self, section: QWidget) -> None:
         y = section.mapTo(self.scroll.widget(), section.rect().topLeft()).y() - 16
         self._smooth.vertical.scroll_to(max(0, y))
 
     # ================================================================== server
+    def _servers_section(self) -> Section:
+        s = Section("Servers",
+                    "Each server is a separate Jellyfin install with its own users and libraries. "
+                    "To reach the same server another way (Tailscale, a domain), add an address "
+                    "under Connection instead.")
+        self.srv_box = QVBoxLayout()
+        self.srv_box.setSpacing(8)
+        s.v.addLayout(self.srv_box)
+        h = QHBoxLayout()
+        add = _button("+ Add a server")
+        add.clicked.connect(self.add_server.emit)
+        h.addWidget(add)
+        h.addStretch(1)
+        s.v.addLayout(h)
+        self._on_load(self._srv_fill)
+        return s
+
+    def _srv_fill(self) -> None:
+        _clear_layout(self.srv_box)
+        active = self.session.active_server_key
+        d = self.session.discovery
+        for entry in self.session.servers():
+            key = entry.get("key")
+            is_active = key == active
+            row = QFrame()
+            row.setProperty("role", "serverrow")
+            row.setProperty("inuse", "true" if is_active else "false")
+            h = QHBoxLayout(row)
+            h.setContentsMargins(16, 12, 12, 12)
+            h.setSpacing(10)
+            text = QVBoxLayout()
+            text.setSpacing(2)
+            top = QHBoxLayout()
+            top.setSpacing(8)
+            top.addWidget(_label(f"<b>{_esc(self.session.server_name(entry))}</b>"), 1)
+            if is_active:
+                top.addWidget(_pill("CONNECTED" if d and d.chosen else "IN USE"), 0,
+                              Qt.AlignmentFlag.AlignTop)
+            text.addLayout(top)
+            addrs = entry.get("addresses") or []
+            n = len(addrs)
+            bits = [f"{n} address{'es' if n != 1 else ''}"]
+            if (entry.get("last_user") or {}).get("name"):
+                bits.append(f"last signed in as {entry['last_user']['name']}")
+            if not entry.get("server_id"):
+                bits.append("not confirmed yet")
+            text.addWidget(_label(" · ".join(bits), "hint"))
+            h.addLayout(text, 1)
+            rename = _button("Rename")
+            rename.clicked.connect(lambda _=False, e=entry: self._srv_rename(e))
+            h.addWidget(rename)
+            if not is_active:
+                rm = _button("Remove")
+                rm.clicked.connect(lambda _=False, e=entry: self._srv_remove(e))
+                use = _button("Switch to", "primary")
+                use.clicked.connect(lambda _=False, k=key: self.switch_server.emit(k))
+                h.addWidget(rm)
+                h.addWidget(use)
+            self.srv_box.addWidget(row)
+
+    def _srv_rename(self, entry: dict) -> None:
+        name, ok = QInputDialog.getText(self, "Rename server", "Name:", text=self.session.server_name(entry))
+        if ok:
+            self.session.rename_server(entry["key"], name)
+            self._srv_fill()
+            self._show_connection()
+
+    def _srv_remove(self, entry: dict) -> None:
+        name = self.session.server_name(entry)
+        ans = QMessageBox.question(self, "Remove server?",
+                                   f"Remove {name} and its saved sign-in from this app? "
+                                   "Nothing changes on the server itself.",
+                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                                   QMessageBox.StandardButton.Cancel)
+        if ans == QMessageBox.StandardButton.Yes:
+            self.session.remove_server(entry["key"])
+            self._srv_fill()
+            self.toast.emit(f"Removed {name}.", False)
+
     def _server_section(self) -> Section:
-        s = Section("Server & connection",
-                    "The app tries these addresses in order and uses the first one that answers "
-                    "as your pinned server.")
+        s = Section("Connection",
+                    "On start the app reconnects through the address that worked last time, then "
+                    "checks all of them in the background and moves to the highest one on this list "
+                    "that answers. If the connection drops it checks again.")
+        self.conn_title = s.title_label
         self.conn_lbl = _label("")
         self.conn_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.recheck_btn = _button("Re-check now")
+        self.recheck_btn.setToolTip("Try every address now and use the best one that answers")
         self.recheck_btn.clicked.connect(self._recheck)
         h = QHBoxLayout()
         h.addWidget(self.conn_lbl, 1)
@@ -427,16 +544,16 @@ class SettingsPage(Page):
         s.v.addLayout(h)
         self._on_load(self._show_connection)
 
-        s.sub("Addresses")
+        s.sub("Addresses — tried top to bottom")
         self.addr_box = QVBoxLayout()
-        self.addr_box.setSpacing(8)
+        self.addr_box.setSpacing(4)
         s.v.addLayout(self.addr_box)
         btns = QHBoxLayout()
         self.addr_add = _button("+ Add address")
         self.addr_add.clicked.connect(self._addr_add)
         self.addr_save = _button("Save addresses", "primary")
         self.addr_save.clicked.connect(self._addr_save)
-        self.addr_msg = _label("", "muted")
+        self.addr_msg = _label("", "hint")
         btns.addWidget(self.addr_add)
         btns.addWidget(self.addr_msg, 1)
         btns.addWidget(self.addr_save)
@@ -450,26 +567,29 @@ class SettingsPage(Page):
               self.check("network.never_stream_public", True))
         self.forget_btn = _button("Forget server…")
         self.forget_btn.clicked.connect(self._forget_server)
-        s.row("Forget this server",
+        s.row("Forget this server's ID",
               "Asks “Is this your server?” again on the next connect. Use it if the server was "
               "reinstalled and got a new ServerId. Your sign-in is kept.", self.forget_btn)
         return s
 
     def _show_connection(self) -> None:
+        name = self.session.server_name()
+        self.conn_title.setText(f"Connection — {name}")
         d = self.session.discovery
-        sid = self.settings.get("server_id") or "not pinned"
+        sid = self.settings.get("server_id") or "not confirmed yet"
         if not (d and d.chosen and d.chosen.info):
-            self.conn_lbl.setText(f"Not connected.\nPinned ServerId: {sid}")
+            self.conn_lbl.setText(f"Not connected.<br><span style='color:{theme.MUTED}'>ServerId: {sid}</span>")
             return
         c, info = d.chosen.candidate, d.chosen.info
         ms = f" · {d.chosen.latency_ms:.0f} ms" if d.chosen.latency_ms is not None else ""
         where = c.label or c.url
-        warn = ("\nOn the public address — video plays only over Tailscale or at home."
+        warn = ("On the public address — video plays only over Tailscale or at home."
                 if d.is_public and self.settings.get("network.never_stream_public", True) else "")
-        self.conn_lbl.setText(f"Connected to <b>{info.name}</b> (Jellyfin {info.version}) via "
-                              f"<b>{where}</b> — {c.url}{ms}<br>"
-                              f"<span style='color:{theme.MUTED}'>Pinned ServerId: {sid}</span>"
-                              + (f"<br><span style='color:{theme.DANGER}'>{warn.strip()}</span>" if warn else ""))
+        self.conn_lbl.setText(f"Connected to <b>{_esc(info.name)}</b> (Jellyfin {_esc(info.version)}) "
+                              f"via <b>{_esc(where)}</b>{ms}<br>"
+                              f"<span style='color:{theme.MUTED}'>ServerId: {sid}</span>"
+                              + (f"<br><span style='color:{theme.DANGER}'>{warn}</span>" if warn else ""))
+        self._addr_marks()
 
     def _recheck(self) -> None:
         self.recheck_btn.setEnabled(False)
@@ -501,21 +621,18 @@ class SettingsPage(Page):
     def _addr_fill(self, addresses) -> None:
         rows = [prefs.AddressRow(a.get("label", ""), a.get("url", ""), bool(a.get("public")))
                 if isinstance(a, dict) else a for a in addresses]
-        while self.addr_box.count():
-            item = self.addr_box.takeAt(0)
-            w = item.widget()
-            if w is not None:
-                w.deleteLater()
+        _clear_layout(self.addr_box)
         self._addr_rows = []
         for i, r in enumerate(rows):
             self._addr_rows.append(self._addr_row(i, r, len(rows)))
         self.addr_msg.setText("")
+        self._addr_marks()
 
     def _addr_row(self, i: int, r: prefs.AddressRow, count: int) -> dict:
-        w = QWidget()
-        w.setProperty("role", "plain")
+        w = QFrame()
+        w.setProperty("role", "addrrow")
         v = QVBoxLayout(w)
-        v.setContentsMargins(0, 0, 0, 0)
+        v.setContentsMargins(8, 6, 8, 6)
         v.setSpacing(3)
         h = QHBoxLayout()
         h.setSpacing(6)
@@ -530,33 +647,79 @@ class SettingsPage(Page):
         public.setChecked(r.public)
         public.setToolTip("Reached over the internet (Cloudflare). Tried last, with a longer timeout.")
         test = _button("Test")
-        up = _button("↑")
-        up.setFixedWidth(40)
+        test.setToolTip("Check this address now")
+        up = _button("↑", "icon")
         up.setToolTip("Try this one earlier")
         up.setEnabled(i > 0)
-        rm = _button("✕")
-        rm.setFixedWidth(40)
+        down = _button("↓", "icon")
+        down.setToolTip("Try this one later")
+        down.setEnabled(i < count - 1)
+        rm = _button("✕", "icon")
         rm.setToolTip("Remove")
         rm.setEnabled(count > 1)
+        # Two lines, so the URL keeps the full width at any window or text size:
+        #   1.  [name] [url ...................................]
+        #       IN USE  answered in 3 ms        □ Public  Test  ↑ ↓ ✕
         for x in (num, label):
             h.addWidget(x)
         h.addWidget(url, 1)
-        for x in (public, test, up, rm):
-            h.addWidget(x)
         v.addLayout(h)
-        status = _label("", "muted")
-        status.setStyleSheet("font-size: 12px; padding-left: 26px;")
+        foot = QHBoxLayout()
+        foot.setContentsMargins(26, 0, 0, 0)
+        foot.setSpacing(6)
+        pill = _pill("IN USE")
+        pill.hide()
+        status = _label("", "hint")
         status.hide()
-        v.addWidget(status)
+        foot.addWidget(pill, 0, Qt.AlignmentFlag.AlignVCenter)
+        foot.addWidget(status, 1)
+        for x in (public, test, up, down, rm):
+            foot.addWidget(x)
+        v.addLayout(foot)
         self.addr_box.addWidget(w)
-        row = {"label": label, "url": url, "public": public, "status": status}
+        row = {"frame": w, "label": label, "url": url, "public": public, "status": status, "pill": pill,
+               "saved_url": normalize_base_url(r.url)}
         test.clicked.connect(lambda: self._addr_test(row))
-        up.clicked.connect(lambda: self._addr_move(i))
+        up.clicked.connect(lambda: self._addr_move(i, -1))
+        down.clicked.connect(lambda: self._addr_move(i, +1))
         rm.clicked.connect(lambda: self._addr_remove(i))
-        url.editingFinished.connect(lambda: self.addr_msg.setText("Unsaved changes."))
-        label.textEdited.connect(lambda _t: self.addr_msg.setText("Unsaved changes."))
-        public.toggled.connect(lambda _v: self.addr_msg.setText("Unsaved changes."))
+        url.editingFinished.connect(lambda: self._addr_dirty())
+        label.textEdited.connect(lambda _t: self._addr_dirty())
+        public.toggled.connect(lambda _v: self._addr_dirty())
         return row
+
+    def _addr_dirty(self) -> None:
+        self.addr_msg.setText("Unsaved changes.")
+        set_tone(self.addr_msg, "")
+
+    def _addr_marks(self) -> None:
+        """Outline the address in use; show what the last check found for the others."""
+        d = self.session.discovery
+        results = {r.candidate.url: r for r in (d.results if d else [])}
+        in_use = d.chosen.candidate.url if d and d.chosen else None
+        for row in self._addr_rows:
+            u = row["saved_url"]
+            on = bool(u) and u == in_use
+            frame, pill, status = row["frame"], row["pill"], row["status"]
+            frame.setProperty("inuse", "true" if on else "false")
+            frame.style().unpolish(frame)
+            frame.style().polish(frame)
+            pill.setVisible(on)
+            res = results.get(u)
+            if on:
+                ms = f"answered in {res.latency_ms:.0f} ms" if res and res.latency_ms is not None else ""
+                text, tone = ms, ""
+            elif res is None:
+                text, tone = ("Not checked yet — the app stopped at a better address." if results else ""), ""
+            elif not res.ok:
+                text, tone = "✕ No answer at the last check.", "error"
+            elif res.id_match is False:
+                text, tone = "✕ A different server answered here — not used.", "error"
+            else:
+                text, tone = f"Answered in {res.latency_ms:.0f} ms — a higher one on the list is used.", ""
+            status.setText(text)
+            set_tone(status, tone)
+            status.setVisible(bool(text))
 
     def _addr_add(self) -> None:
         rows = self._addr_current() + [prefs.AddressRow("", "", False)]
@@ -565,17 +728,17 @@ class SettingsPage(Page):
         last = self._addr_rows[-1]
         last["url"].editingFinished.connect(
             lambda: last["public"].setChecked(prefs.guess_public(last["url"].text())))
-        self.addr_msg.setText("Unsaved changes.")
+        self._addr_dirty()
 
-    def _addr_move(self, i: int) -> None:
-        self._addr_fill(prefs.move(self._addr_current(), i, -1))
-        self.addr_msg.setText("Unsaved changes.")
+    def _addr_move(self, i: int, delta: int) -> None:
+        self._addr_fill(prefs.move(self._addr_current(), i, delta))
+        self._addr_dirty()
 
     def _addr_remove(self, i: int) -> None:
         rows = self._addr_current()
         del rows[i]
         self._addr_fill(rows)
-        self.addr_msg.setText("Unsaved changes.")
+        self._addr_dirty()
 
     def _addr_test(self, row: dict) -> None:
         status: QLabel = row["status"]
@@ -584,20 +747,19 @@ class SettingsPage(Page):
         status.show()
         if err:
             status.setText(err)
-            status.setStyleSheet(f"font-size: 12px; padding-left: 26px; color: {theme.DANGER};")
+            set_tone(status, "error")
             return
         a = rows[0]
         cand = Candidate(a["url"], a["label"], a["public"])
         status.setText("Testing…")
-        status.setStyleSheet(f"font-size: 12px; padding-left: 26px; color: {theme.MUTED};")
+        set_tone(status, "")
         sid, did = self.settings.get("server_id"), self.session.client.device_id
 
         def done(res) -> None:
             try:
                 good = res.usable
                 status.setText(("✓ " if good else "✕ ") + res.describe().split(": ", 1)[-1])
-                status.setStyleSheet(f"font-size: 12px; padding-left: 26px; "
-                                     f"color: {theme.SUCCESS if good else theme.DANGER};")
+                set_tone(status, "ok" if good else "error")
             except RuntimeError:          # the row was rebuilt meanwhile
                 pass
 
@@ -607,9 +769,9 @@ class SettingsPage(Page):
         rows, err = prefs.validate_addresses(self._addr_current())
         if err:
             self.addr_msg.setText(err)
-            self.addr_msg.setStyleSheet(f"color: {theme.DANGER};")
+            set_tone(self.addr_msg, "error")
             return
-        self.addr_msg.setStyleSheet("")
+        set_tone(self.addr_msg, "")
         self.session.set_addresses(rows)
         self._addr_fill(rows)
         self.addr_msg.setText("Saved. Checking which one to use…")
@@ -639,26 +801,6 @@ class SettingsPage(Page):
         s.row("Signed in", "", self.user_lbl, sw, lo)
         self._on_load(lambda: self.user_lbl.setText(
             f"<b>{self.session.user.name}</b>" if self.session.user else "—"))
-
-        s.divider()
-        s.sub("Approve a Quick Connect code")
-        s.v.addWidget(_label("Signing in on a TV, phone or another computer? Choose Quick Connect there "
-                             "and type the code it shows here.", "muted"))
-        h = QHBoxLayout()
-        self.qc_code = QLineEdit()
-        self.qc_code.setPlaceholderText("123456")
-        self.qc_code.setMaxLength(12)
-        self.qc_code.setFixedWidth(160)
-        self.qc_code.setStyleSheet("font-family: 'JetBrains Mono', 'DejaVu Sans Mono', monospace;"
-                                   "font-size: 18px; letter-spacing: 3px;")
-        self.qc_btn = _button("Approve", "primary")
-        self.qc_msg = _label("", "muted")
-        h.addWidget(self.qc_code)
-        h.addWidget(self.qc_btn)
-        h.addWidget(self.qc_msg, 1)
-        s.v.addLayout(h)
-        self.qc_btn.clicked.connect(self._qc_approve)
-        self.qc_code.returnPressed.connect(self._qc_approve)
         return s
 
     def _log_out(self) -> None:
@@ -669,37 +811,6 @@ class SettingsPage(Page):
                                    QMessageBox.StandardButton.Cancel)
         if ans == QMessageBox.StandardButton.Yes:
             self.log_out.emit()
-
-    def _qc_approve(self) -> None:
-        code = "".join(ch for ch in self.qc_code.text() if ch.isalnum())
-        if not code:
-            self.qc_msg.setText("Type the code from the other device.")
-            return
-        self.qc_btn.setEnabled(False)
-        self.qc_msg.setStyleSheet("")
-        self.qc_msg.setText("Approving…")
-        client = self.session.client
-
-        def done(ok: bool) -> None:
-            self.qc_btn.setEnabled(True)
-            if ok:
-                self.qc_code.clear()
-                self.qc_msg.setStyleSheet(f"color: {theme.SUCCESS};")
-                self.qc_msg.setText("✓ Approved — that device is signing in now.")
-            else:
-                failed(RuntimeError("the server refused it"))
-
-        def failed(e: Exception) -> None:
-            self.qc_btn.setEnabled(True)
-            self.qc_msg.setStyleSheet(f"color: {theme.DANGER};")
-            if isinstance(e, NotFound):
-                self.qc_msg.setText("That code wasn't found — it may have expired (codes last 5 minutes).")
-            elif isinstance(e, Unauthorized):
-                self.qc_msg.setText("The server didn't allow it (is Quick Connect enabled?).")
-            else:
-                self.qc_msg.setText(f"Couldn't approve: {e}")
-
-        run_async(lambda: auth.authorize_code(client, code), done, failed)
 
     # ================================================================== playback
     def _playback_section(self) -> Section:
@@ -729,8 +840,9 @@ class SettingsPage(Page):
     def _languages_section(self) -> Section:
         s = Section("Languages",
                     "Used when a series has no remembered choice. The first language a file has wins.")
-        grid = QHBoxLayout()
+        grid = QBoxLayout(QBoxLayout.Direction.LeftToRight)
         grid.setSpacing(24)
+        self._lang_grid, self._lang_lists = grid, []
         for key, title in (("audio", "Audio, in order of preference"),
                            ("subtitle", "Subtitles, in order of preference")):
             box = QVBoxLayout()
@@ -739,6 +851,7 @@ class SettingsPage(Page):
             ll.changed.connect(lambda codes, k=key: self._set(f"languages.{k}", codes))
             self._on_load(lambda ll=ll, k=key: ll.set_codes(list(self.settings.get(f"languages.{k}", []) or [])))
             box.addWidget(ll)
+            self._lang_lists.append(ll)
             grid.addLayout(box, 1)
         s.v.addLayout(grid)
         s.row("When the audio is already in a subtitle language",
@@ -1001,11 +1114,40 @@ class SettingsPage(Page):
     # ================================================================== app
     def _app_section(self) -> Section:
         s = Section("App")
+        self.text_size = QSpinBox()
+        self.text_size.setRange(theme.TEXT_SCALE_MIN, theme.TEXT_SCALE_MAX)
+        self.text_size.setSingleStep(theme.TEXT_SCALE_STEP)
+        self.text_size.setSuffix(" %")
+        self.text_size.setFixedWidth(130)
+        self.text_size.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.text_size.setToolTip("Use the arrows, the mouse wheel or ↑/↓")
+        reset = _button("Reset")
+        reset.setToolTip(f"Back to {theme.TEXT_SCALE_DEFAULT} %")
+        reset.clicked.connect(lambda: self.text_size.setValue(theme.TEXT_SCALE_DEFAULT))
+        self._text_timer = QTimer(self)
+        self._text_timer.setSingleShot(True)
+        self._text_timer.setInterval(220)          # let a few arrow clicks land before restyling
+        self._text_timer.timeout.connect(self._apply_text_size)
+        self.text_size.valueChanged.connect(lambda _v: self._text_timer.start())
+
+        def load() -> None:
+            with _Blocked(self.text_size):
+                self.text_size.setValue(theme.clamp_text_scale(
+                    self.settings.get("ui.text_scale", theme.TEXT_SCALE_DEFAULT)))
+
+        self._on_load(load)
+        s.row("Text size", f"Makes all text in the app bigger or smaller, from {theme.TEXT_SCALE_MIN} % "
+              f"to {theme.TEXT_SCALE_MAX} % — the range every screen is laid out for. Changes apply at once.",
+              self.text_size, reset)
         s.row("Smooth scrolling", "Mouse-wheel notches glide instead of jumping. Touchpads always scroll natively.",
               self.check("ui.smooth_scroll", True, after=lambda v: setattr(smooth, "ENABLED", v)))
         s.row("Wide floating window on Hyprland", "Floats the main window at 16:9 and centres it. "
               "Applies from the next start.", self.check("window.hyprland_float", True))
         return s
+
+    def _apply_text_size(self) -> None:
+        pct = theme.apply_text_scale(QApplication.instance(), self.text_size.value())
+        self._set("ui.text_scale", pct)
 
     # ================================================================== storage & about
     def _about_section(self) -> Section:
@@ -1054,9 +1196,7 @@ class SettingsPage(Page):
         self.sc_out = QPlainTextEdit()
         self.sc_out.setReadOnly(True)
         self.sc_out.setFixedHeight(300)
-        self.sc_out.setStyleSheet(f"QPlainTextEdit {{ background: {theme.BG}; border: 1px solid {theme.BORDER};"
-                                  f" border-radius: 10px; padding: 8px; font-family: 'JetBrains Mono',"
-                                  f" 'DejaVu Sans Mono', monospace; font-size: 12px; }}")
+        self.sc_out.setProperty("role", "mono")
         self.sc_out.hide()
         s.v.addWidget(self.sc_out)
         self.sc_btn.clicked.connect(self._selfcheck)

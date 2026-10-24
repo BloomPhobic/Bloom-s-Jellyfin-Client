@@ -5,11 +5,12 @@ Emits ready(User | None) once connected: a User means the stored token worked.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QVBoxLayout, QWidget
 
 from .. import APP_NAME, __version__, prefs
 from ..api.discovery import Discovery
 from ..session import Session
+from .servers import fill_server_menu
 from .workers import run_async
 
 
@@ -32,6 +33,7 @@ def _button(text: str, role: str | None = None) -> QPushButton:
 
 class StartupScreen(QWidget):
     ready = Signal(object)           # User | None
+    switch_server = Signal(str)      # saved-server key
 
     def __init__(self, session: Session, parent: QWidget | None = None):
         super().__init__(parent)
@@ -74,8 +76,12 @@ class StartupScreen(QWidget):
         self.pin_btn = _button("Yes, this is my server", "primary")
         self.retry_btn = _button("Retry")
         self.change_btn = _button("Change address")
+        self.other_btn = _button("Use another server")
+        self.other_menu = QMenu(self.other_btn)
+        self.other_btn.setMenu(self.other_menu)
         row.addWidget(self.pin_btn)
         row.addWidget(self.retry_btn)
+        row.addWidget(self.other_btn)
         row.addWidget(self.change_btn)
         row.addStretch()
         cl.addLayout(row)
@@ -94,12 +100,21 @@ class StartupScreen(QWidget):
         self.pin_btn.hide()
         self.retry_btn.hide()
         self.change_btn.hide()
+        self.other_btn.hide()
+
+    def _offer_others(self) -> None:
+        """When several servers are saved, let a stuck start switch to another."""
+        others = fill_server_menu(self.other_menu, self.session, self.switch_server.emit,
+                                  include_active=False)
+        self.other_btn.setVisible(others > 0)
 
     def start(self) -> None:
-        self.status.setText("Looking for your server…")
+        name = self.session.server_name()
+        self.status.setText(f"Looking for {name}…" if self.session.server_id else "Looking for your server…")
         self.detail.setText("")
         self.retry_btn.hide()
         self.pin_btn.hide()
+        self.other_btn.hide()
         self.change_btn.hide()
         self.addr_row.hide()
         if not self.session.candidates():
@@ -110,10 +125,12 @@ class StartupScreen(QWidget):
     def _connected(self, d: Discovery) -> None:
         if not d.chosen:
             lines = [r.describe() for r in d.results]
-            self.status.setText("Can't reach your server")
+            self.status.setText(f"Can't reach {self.session.server_name()}" if self.session.server_id
+                                else "Can't reach your server")
             self.detail.setText(d.reason + ("\n\n" + "\n".join(lines) if lines else ""))
             self.retry_btn.show()
             self.change_btn.show()
+            self._offer_others()
             return
         info = d.chosen.info
         assert info
@@ -125,6 +142,7 @@ class StartupScreen(QWidget):
             self.pin_btn.show()
             self.retry_btn.show()
             self.change_btn.show()
+            self._offer_others()
             return
         if self.session.used_fast_path:
             run_async(self.session.reprobe)      # switch to a better address in the background
@@ -163,6 +181,7 @@ class StartupScreen(QWidget):
         self.pin_btn.hide()
         self.retry_btn.hide()
         self.change_btn.hide()
+        self.other_btn.hide()
         self._restore()
 
     def _failed(self, err: Exception) -> None:
@@ -170,3 +189,4 @@ class StartupScreen(QWidget):
         self.detail.setText(str(err))
         self.retry_btn.show()
         self.change_btn.show()
+        self._offer_others()

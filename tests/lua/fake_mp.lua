@@ -73,7 +73,7 @@ function mp.set_property(name, v) setp(name, v) end
 function mp.set_property_number(name, v) setp(name, v) end
 function mp.set_property_bool(name, v) setp(name, v) end
 function mp.commandv(...) local a = { ... }; table.insert(M.commands, a)
-    if a[1] == "script-message" then table.insert(M.sent, { table.unpack(a, 2) }) end
+    if a[1] == "script-message" then table.insert(M.sent, { (table.unpack or unpack)(a, 2) }) end
     if a[1] == "cycle" then M.set(a[2], not M.props[a[2]]) end
     if a[1] == "seek" and a[3] and a[3]:find("absolute") then M.set("time-pos", tonumber(a[2])) end
 end

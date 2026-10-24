@@ -24,6 +24,7 @@ Linux first (tested on Arch with Hyprland and other Wayland/X11 desktops); needs
 | 7 | In-player controls (bloom.lua): transport, menus, episode browser, style memory, basic autoplay | done |
 | 8 | Skip intro/credits, Up Next card with countdown, "Still watching?" | done |
 | 9 | Settings page | done |
+| 10 | Several servers, text size, Quick Connect page, grid fills any screen width | done |
 
 Phase 1 also includes the segment fetcher (`player/segments.py`), because `--selfcheck` reports which skip-intro source your server has.
 
@@ -38,10 +39,6 @@ pip install -e .
 bloomsarchive --install-desktop       # launcher entry; also fixes the portal app-id warning
 #   (or, with no flags to mistype:  python -m bloomsarchive.desktop)
 ```
-
-Other distributions: install mpv and PySide6 6.5 or newer from your package manager (or `pip install PySide6` inside the venv).
-
-Other distributions: install mpv and PySide6 6.5 or newer from your package manager (or `pip install PySide6` inside the venv).
 
 Other distributions: install mpv and PySide6 6.5 or newer from your package manager (or `pip install PySide6` inside the venv).
 
@@ -80,23 +77,6 @@ Replace these examples with your own (one address is enough). `"public": true` m
 the internet: it's tried last with a longer timeout, and by default video won't stream over it
 (`network.never_stream_public`), so a slow or metered tunnel is only used for browsing.
 
-## Point it at your server
-
-The app tries a list of addresses for your server in order and uses the first one that answers. They're in
-`~/.config/bloomsarchive/settings.json` (created on first run) under `addresses`:
-
-```json
-"addresses": [
-  {"label": "Home LAN",  "url": "http://192.168.1.50:8096",     "public": false},
-  {"label": "Tailscale", "url": "http://100.64.0.10:8096",      "public": false},
-  {"label": "Public",    "url": "https://jellyfin.example.com", "public": true}
-]
-```
-
-Replace these examples with your own (one address is enough). `"public": true` marks an address reached over
-the internet: it's tried last with a longer timeout, and by default video won't stream over it
-(`network.never_stream_public`), so a slow or metered tunnel is only used for browsing.
-
 ## First run: self-check
 
 ```sh
@@ -117,7 +97,7 @@ bloomsarchive            # or: python -m bloomsarchive --debug
 Startup finds the server (last working address first, then a background re-probe that switches to a better one), asks you to confirm the server on first run, and signs you straight in if your stored token is still valid. Otherwise you get the login screen:
 
 - **Profiles** — click your avatar. Users without a password sign in immediately; a user whose token is still stored (after *Switch user*) switches back without a password.
-- **Quick Connect** — shows a 6-digit code; approve it from any signed-in Jellyfin session (profile menu → Quick Connect), or from *Settings → Account* in this app on another computer. Expires after 5 minutes.
+- **Quick Connect** — shows a 6-digit code; approve it from any signed-in Jellyfin session (profile menu → Quick Connect), or from **Quick Connect** in the sidebar of this app on another computer. Expires after 5 minutes.
 - **Manual login** — for users hidden from the profile list.
 - *Switch user* keeps your token; *Log out* revokes it on the server. If the server ever rejects your token, you're sent back to sign in.
 
@@ -183,14 +163,21 @@ Tiling gives a new window whatever slot the layout has, often a tall column. On 
 
 Everything saves as soon as you change it. Open the page from the bottom of the sidebar; the chips at the top jump to a section.
 
-- **Server & connection:** which server and address you're on (with latency), *Re-check now*, the address list (edit, add, reorder, mark public, **Test** each one, then *Save addresses*), *Never stream video over the public address*, and *Forget server…* (asks "Is this your server?" again; your sign-in is kept).
-- **Account:** switch user, log out, and **approve a Quick Connect code** for another device.
+- **Servers:** every Jellyfin server you've added, the connected one outlined. *+ Add a server* (checks the address first and refuses one you already have — that's an extra *address*, not a server), *Switch to*, *Rename*, *Remove*. Each server keeps its own addresses, pinned ServerId and sign-in, so switching back signs you straight in. Switching is also in your name menu (top right), and on the startup and login screens when a server can't be reached.
+- **Connection:** the connected address (with latency), *Re-check now*, and the address list. The address in use is outlined and marked **IN USE**; the others show what the last check found (no answer, a different server, or answered but lower on the list). Edit, add, reorder (↑ ↓), mark public, **Test** each one, then *Save addresses*. Also *Never stream video over the public address* and *Forget server…* (asks "Is this your server?" again; your sign-in is kept).
+- **Account:** switch user, log out.
 - **Playback:** autoplay, when Up Next appears (5–60 s), *Still watching?* after 2–10 episodes or never, **intros** and **credits** each as *Show a Skip button / Skip automatically / Do nothing*, resume rewind, and the watched threshold.
 - **Languages:** audio and subtitle languages in order (add, reorder, remove), what to do when the audio is already in a subtitle language (none / forced only / full), and the series with remembered tracks (forget some or all).
 - **Subtitle appearance:** size, bold, font, outline, position and styled-ASS handling, with a live preview. It's the same setting as the player's Aa menu, so a change in either shows up in the other. *Use my mpv.conf instead* drops your changes.
 - **Player:** mpv program (with *Detect* and its version), extra mpv options, use my mpv.conf, Bloom controls, start fullscreen. These apply the next time a video starts.
-- **App:** smooth scrolling (applies at once), wide floating window on Hyprland.
+- **App:** **Text size** 85–130 % (arrows, mouse wheel or ↑/↓; applies at once, *Reset* goes back to 100 %), smooth scrolling (applies at once), wide floating window on Hyprland.
 - **Storage & about:** image-cache size and *Clear*, open the settings folder, install the launcher entry, **Reset all settings** (keeps server, addresses and sign-in), versions, and an in-app **self-check** with *Copy report*.
+
+**Quick Connect** has its own page (sidebar, above Settings): type the 6-digit code another device shows and press *Approve* to sign it in as you.
+
+**How the address is chosen:** at start the app reconnects through the address that worked last time (fast), then checks every address in the background and moves to the highest one on the list that answers with your server's ID. It checks again whenever the connection drops, and on *Re-check now*.
+
+**Text size and narrow windows:** rows of controls (library filters, settings chips, address rows) wrap onto a second line instead of squashing; the two language lists stack; the sidebar widens just enough for long library names. The range stops at 130 % because that's the largest size every screen was checked at, down to the 900 × 560 minimum window.
 
 Settings saved by 0.8 (`playback.skip_mode`) are converted automatically.
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer
 from PySide6.QtWidgets import QLabel, QWidget
 
-from .. import theme
 
 
 class Toast(QLabel):
@@ -13,6 +12,7 @@ class Toast(QLabel):
         self.host = host
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setWordWrap(True)
+        self.setProperty("role", "toast")
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -21,10 +21,9 @@ class Toast(QLabel):
         self.hide()
 
     def show_message(self, text: str, error: bool = False, ms: int = 2800) -> None:
-        border = theme.DANGER if error else theme.ACCENT
-        self.setStyleSheet(
-            f"background: {theme.RAISED}; color: {theme.TEXT}; border: 1px solid {border};"
-            "border-radius: 10px; padding: 10px 18px; font-size: 14px;")
+        self.setProperty("tone", "error" if error else "")
+        self.style().unpolish(self)
+        self.style().polish(self)
         self.setText(text)
         self._place()
         self.show()

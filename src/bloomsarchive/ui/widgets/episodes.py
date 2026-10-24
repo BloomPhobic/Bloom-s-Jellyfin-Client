@@ -116,12 +116,12 @@ class EpisodeDelegate(CardDelegate):
         x = img.right() + 18
         w = played_rect.left() - 18 - x
         f = QFont(option.font)
-        f.setPixelSize(15)
+        f.setPixelSize(theme.px(15))
         f.setBold(True)
         p.setFont(f)
         p.setPen(QColor(theme.TEXT if not item.user_data.played else theme.MUTED))
         num = f"{item.index_number}. " if item.index_number is not None else ""
-        title_rect = QRectF(x, img.top() + 2, w, 22)
+        title_rect = QRectF(x, img.top() + 2, w, theme.px(22))
         p.drawText(title_rect, int(Qt.AlignmentFlag.AlignLeft) | int(Qt.AlignmentFlag.AlignVCenter),
                    p.fontMetrics().elidedText(num + item.name, Qt.TextElideMode.ElideRight, int(w)))
 
@@ -130,18 +130,19 @@ class EpisodeDelegate(CardDelegate):
             meta.append("watched")
         elif frac > 0:
             meta.append(f"{int(frac * 100)}% watched")
-        f.setPixelSize(12)
+        f.setPixelSize(theme.px(12))
         f.setBold(False)
         p.setFont(f)
         p.setPen(QColor(theme.MUTED))
-        p.drawText(QRectF(x, title_rect.bottom() + 1, w, 18),
+        p.drawText(QRectF(x, title_rect.bottom() + 1, w, theme.px(18)),
                    int(Qt.AlignmentFlag.AlignLeft) | int(Qt.AlignmentFlag.AlignVCenter), " · ".join(meta))
 
         if item.overview:
-            f.setPixelSize(13)
+            f.setPixelSize(theme.px(13))
             p.setFont(f)
             p.setPen(QColor(200, 194, 220))
-            ov_rect = QRectF(x, title_rect.bottom() + 24, w, 40)
+            line = theme.px(19)
+            ov_rect = QRectF(x, title_rect.bottom() + theme.px(18) + theme.px(6), w, 2 * line)
             text = overview_plain(item.overview)
             fm = p.fontMetrics()
             # two lines max, ellipsis on the second
@@ -150,9 +151,9 @@ class EpisodeDelegate(CardDelegate):
                 cut = text.rfind(" ", 0, cut)
             first = text[:cut] if cut > 0 else ""
             second = fm.elidedText(text[len(first):].strip(), Qt.TextElideMode.ElideRight, int(w))
-            p.drawText(QRectF(ov_rect.x(), ov_rect.y(), w, 20),
+            p.drawText(QRectF(ov_rect.x(), ov_rect.y(), w, line + 1),
                        int(Qt.AlignmentFlag.AlignLeft) | int(Qt.AlignmentFlag.AlignVCenter), first)
-            p.drawText(QRectF(ov_rect.x(), ov_rect.y() + 19, w, 20),
+            p.drawText(QRectF(ov_rect.x(), ov_rect.y() + line, w, line + 1),
                        int(Qt.AlignmentFlag.AlignLeft) | int(Qt.AlignmentFlag.AlignVCenter), second)
 
 

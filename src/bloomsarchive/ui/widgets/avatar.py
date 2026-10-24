@@ -104,7 +104,7 @@ class AvatarTile(QAbstractButton):
             p.drawEllipse(rect.adjusted(-5, -5, 5, 5))
 
         f = QFont(self.font())
-        f.setPixelSize(15)
+        f.setPixelSize(theme.px(15))
         f.setBold(self.isChecked())
         p.setFont(f)
         p.setPen(QColor(theme.TEXT if (self.isChecked() or hover) else theme.MUTED))

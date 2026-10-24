@@ -53,7 +53,7 @@ class LibraryPage(Page):
         head.setContentsMargins(7, 0, 12, 0)
         t = QLabel(title)
         t.setProperty("role", "h1")
-        head.addWidget(t)
+        head.addWidget(t, 0, Qt.AlignmentFlag.AlignTop)
         head.addSpacing(18)
         self.filters = FilterBar(show_favourites=show_favourites_filter)
         head.addWidget(self.filters, 1)

@@ -33,8 +33,12 @@ KeyRole = Qt.ItemDataRole.UserRole + 2
 
 PAD = 7          # room around each card for the hover zoom
 PULSE_SECONDS = 0.45
-TEXT_H = 46
 RADIUS = 10
+
+
+def text_height() -> int:
+    """Room for the title + subtitle under a card; grows with the text size."""
+    return 8 + theme.px(20) + theme.px(18)
 
 
 class CardStyle(Enum):
@@ -55,7 +59,7 @@ class CardStyle(Enum):
         return self.value[2]
 
     def size(self) -> QSize:
-        return QSize(self.width + 2 * PAD, self.image_height + (TEXT_H if self.has_text else 0) + 2 * PAD)
+        return QSize(self.width + 2 * PAD, self.image_height + (text_height() if self.has_text else 0) + 2 * PAD)
 
     def key_for(self, item: Item) -> str | None:
         if self is CardStyle.POSTER:
@@ -343,7 +347,7 @@ class CardDelegate(QStyledItemDelegate):
             p.fillRect(img, QBrush(grad))
             if st is not CardStyle.LIBRARY:
                 p.setPen(QColor(theme.MUTED))
-                p.setFont(self._font(option.font, 13, True))
+                p.setFont(self._font(option.font, theme.px(13), True))
                 p.drawText(img.adjusted(10, 10, -10, -10),
                            int(Qt.AlignmentFlag.AlignCenter) | int(Qt.TextFlag.TextWordWrap), title)
 
@@ -353,7 +357,7 @@ class CardDelegate(QStyledItemDelegate):
             fade.setColorAt(1, QColor(13, 10, 20, 225))
             p.fillRect(img, QBrush(fade))
             p.setPen(QColor(theme.TEXT))
-            p.setFont(self._font(option.font, 18, True))
+            p.setFont(self._font(option.font, theme.px(18), True))
             p.drawText(img.adjusted(16, 0, -16, -12),
                        int(Qt.AlignmentFlag.AlignLeft) | int(Qt.AlignmentFlag.AlignBottom), title)
 
@@ -437,14 +441,14 @@ class CardDelegate(QStyledItemDelegate):
 
         # ---- text below
         if st.has_text:
-            tr = QRectF(x0, y0 + st.image_height + 8, w, 20)
-            p.setFont(self._font(option.font, 14, True))
+            tr = QRectF(x0, y0 + st.image_height + 8, w, theme.px(20))
+            p.setFont(self._font(option.font, theme.px(14), True))
             p.setPen(QColor(theme.TEXT))
             p.drawText(tr, int(Qt.AlignmentFlag.AlignLeft) | int(Qt.AlignmentFlag.AlignVCenter),
                        p.fontMetrics().elidedText(title, Qt.TextElideMode.ElideRight, w))
             if subtitle:
-                sr = QRectF(x0, tr.bottom() + 1, w, 18)
-                p.setFont(self._font(option.font, 12))
+                sr = QRectF(x0, tr.bottom(), w, theme.px(18))
+                p.setFont(self._font(option.font, theme.px(12)))
                 p.setPen(QColor(theme.MUTED))
                 p.drawText(sr, int(Qt.AlignmentFlag.AlignLeft) | int(Qt.AlignmentFlag.AlignVCenter),
                            p.fontMetrics().elidedText(subtitle, Qt.TextElideMode.ElideRight, w))
@@ -483,6 +487,12 @@ class CardViewBase(QListView):
         self._pulse_timer = QTimer(self)
         self._pulse_timer.setInterval(16)
         self._pulse_timer.timeout.connect(self._pulse_tick)
+        theme.notifier().changed.connect(self.text_scale_changed)
+
+    def text_scale_changed(self) -> None:
+        """Card sizes depend on the text size: lay the cards out again."""
+        self.doItemsLayout()
+        self.viewport().update()
 
     def _pulse_tick(self) -> None:
         now = time.monotonic()
@@ -568,6 +578,10 @@ class CardListView(CardViewBase):
         self.setFixedHeight(model.style.size().height() + 2)
         self.smooth = SmoothScroller(self.horizontalScrollBar(), parent=self)
 
+    def text_scale_changed(self) -> None:
+        self.setFixedHeight(self.model().style.size().height() + 2)
+        super().text_scale_changed()
+
     def wheelEvent(self, e) -> None:
         d = e.angleDelta()
         sideways = abs(d.x()) > abs(d.y())
@@ -602,15 +616,36 @@ class CardGridView(CardViewBase):
         self.smooth = smooth_install(self)
         self._fit_grid()
 
+    def layout_width(self) -> int:
+        """The width Qt wraps items against.
+
+        With an as-needed scrollbar, Qt lays items out in the full viewport
+        width minus the style's scrollbar extent (not the thinner bar our
+        stylesheet draws), whether or not the bar is shown. Measuring the
+        visible viewport instead made the last column wrap at some window
+        widths, leaving a column-sized gap on the right.
+        """
+        w = self.maximumViewportSize().width()
+        if self.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded:
+            w -= max(self.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent, None, self),
+                     self.verticalScrollBar().sizeHint().width())
+        return min(w, self.viewport().width()) - 1
+
     def _fit_grid(self) -> None:
         card = self.card_delegate.style.size()
-        avail = max(card.width(), self.viewport().width() - 2)
+        avail = max(card.width(), self.layout_width())
         cols = max(1, avail // card.width())
-        self.setGridSize(QSize(avail // cols, card.height() + 6))
+        size = QSize(avail // cols, card.height() + 6)
+        if size != self.gridSize():
+            self.setGridSize(size)
 
     def resizeEvent(self, e) -> None:
         super().resizeEvent(e)
         self._fit_grid()
+
+    def text_scale_changed(self) -> None:
+        self._fit_grid()
+        super().text_scale_changed()
 
     def scroll_to_row(self, row: int) -> None:
         model = self.model()

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import uuid
 
 from .api import auth
 from .api.client import ConnectionFailed, JellyfinClient, JellyfinError, Unauthorized
@@ -15,6 +16,9 @@ from .api.models import User
 from .config import Settings, TokenStore
 
 log = logging.getLogger(__name__)
+
+# Per-server values. The active server's copies are the top-level settings keys.
+PROFILE_KEYS = ("addresses", "server_id", "last_address", "last_user")
 
 
 class Session:
@@ -116,6 +120,108 @@ class Session:
         if d.is_public and self.settings.get("network.never_stream_public", True):
             return False, "Connect Tailscale or be on the home network to play video."
         return True, ""
+
+    # ------------------------------------------------------------------ servers
+    def servers(self) -> list[dict]:
+        """Saved servers, each {"key", "name", "addresses", "server_id", "last_address", "last_user"}.
+
+        The active entry is refreshed from the live settings first, so it's never stale.
+        """
+        with self._lock:
+            self._sync_active()
+            return self.settings.get("servers", [])
+
+    @property
+    def active_server_key(self) -> str:
+        with self._lock:
+            self._sync_active()
+            return self.settings.get("active_server")
+
+    def server_name(self, entry: dict | None = None) -> str:
+        """What to call a server: its saved name, else the first address."""
+        e = entry if entry is not None else next(
+            (s for s in self.servers() if s.get("key") == self.active_server_key), {})
+        if e.get("name"):
+            return e["name"]
+        addrs = e.get("addresses") or []
+        return (addrs[0].get("url") if addrs else "") or "Unnamed server"
+
+    def _sync_active(self) -> None:
+        """Copy the live top-level values into the active entry (creating it on first use)."""
+        servers = self.settings.get("servers", []) or []
+        key = self.settings.get("active_server")
+        entry = next((s for s in servers if s.get("key") == key), None)
+        if entry is None:
+            key = key or uuid.uuid4().hex
+            entry = {"key": key, "name": ""}
+            servers.insert(0, entry)
+        changed = False
+        for k in PROFILE_KEYS:
+            v = self.settings.get(k)
+            if entry.get(k) != v:
+                entry[k] = v
+                changed = True
+        d = self.discovery
+        if (not entry.get("name") and d and d.chosen and d.chosen.info and d.chosen.info.name
+                and not d.needs_pin):
+            entry["name"] = d.chosen.info.name
+            changed = True
+        if changed or self.settings.get("active_server") != key:
+            self.settings.set("servers", servers, save=False)
+            self.settings.set("active_server", key)
+
+    def add_server(self, name: str, addresses: list[dict]) -> str:
+        """Save a new server (not pinned yet: the first connect asks to confirm it). Returns its key."""
+        with self._lock:
+            self._sync_active()
+            servers = self.settings.get("servers", [])
+            key = uuid.uuid4().hex
+            servers.append({"key": key, "name": name.strip(), "addresses": addresses,
+                            "server_id": None, "last_address": None, "last_user": None})
+            self.settings.set("servers", servers)
+            return key
+
+    def rename_server(self, key: str, name: str) -> None:
+        with self._lock:
+            self._sync_active()
+            servers = self.settings.get("servers", [])
+            for s in servers:
+                if s.get("key") == key:
+                    s["name"] = name.strip()
+            self.settings.set("servers", servers)
+
+    def remove_server(self, key: str) -> None:
+        """Delete a saved server that isn't in use, and its stored sign-in."""
+        with self._lock:
+            self._sync_active()
+            if key == self.settings.get("active_server"):
+                raise ValueError("can't remove the server in use — switch to another first")
+            servers = self.settings.get("servers", [])
+            gone = next((s for s in servers if s.get("key") == key), None)
+            self.settings.set("servers", [s for s in servers if s.get("key") != key])
+        if gone and gone.get("server_id") and (gone.get("last_user") or {}).get("id"):
+            self.tokens.clear(gone["server_id"], gone["last_user"]["id"])
+
+    def switch_server(self, key: str) -> None:
+        """Make another saved server the active one. Signs out locally (tokens are kept);
+        call connect() next, as at startup."""
+        with self._lock:
+            self._sync_active()
+            servers = self.settings.get("servers", [])
+            target = next((s for s in servers if s.get("key") == key), None)
+            if target is None:
+                raise KeyError(key)
+            for k in PROFILE_KEYS:
+                self.settings.set(k, target.get(k) if k != "addresses" else (target.get(k) or []),
+                                  save=False)
+            self.settings.set("active_server", key)
+            self.client.token = self.client.user_id = None
+            self.client.base_url = ""
+            self.user = None
+            self.discovery = None
+
+    def find_server_by_id(self, server_id: str) -> dict | None:
+        return next((s for s in self.servers() if s.get("server_id") == server_id), None)
 
     # ------------------------------------------------------------------ login
     def login_client(self) -> JellyfinClient:

@@ -1,5 +1,13 @@
-"""Palette and global stylesheet. Dark with purple accents."""
+"""Palette and global stylesheet. Dark with purple accents.
+
+Text size is one app-wide scale (Settings → App → Text size). Every
+font-size in the stylesheet goes through it, and painted text uses px().
+Layout sizes stay fixed, so the scale is clamped to a range the layouts
+were checked at.
+"""
 from __future__ import annotations
+
+import re
 
 BG = "#0d0a14"
 SURFACE = "#161022"
@@ -16,7 +24,7 @@ SUCCESS = "#4ade80"
 RADIUS = 12
 RADIUS_SMALL = 10
 
-QSS = f"""
+_QSS = f"""
 * {{
     font-family: "Inter", "Noto Sans", "Segoe UI", sans-serif;
     font-size: 14px;
@@ -86,7 +94,7 @@ QToolButton[role="filter"][active="true"], QPushButton[role="chip"]:checked {{
 QToolButton[role="filter"]::menu-indicator {{ image: none; width: 0; }}
 QToolButton[role="letter"] {{
     background: transparent; border: none; border-radius: 6px; color: {MUTED};
-    font-size: 11px; font-weight: 600; padding: 0;
+    font-size: 11px /* fixed */; font-weight: 600; padding: 0;
 }}
 QToolButton[role="letter"]:hover {{ background: {RAISED}; color: {ACCENT_HOVER}; }}
 QToolButton[role="letter"]:disabled {{ color: {BORDER}; }}
@@ -118,6 +126,32 @@ QMenu::item:checked {{ color: {ACCENT_HOVER}; font-weight: 600; }}
 QMenu::indicator {{ width: 14px; height: 14px; }}
 QLineEdit[role="search"] {{ border-radius: 18px; padding: 7px 16px; background: {BG}; }}
 
+QLabel[role="hint"] {{ color: {MUTED}; font-size: 12px; }}
+QLabel[role="hint"][tone="ok"] {{ color: {SUCCESS}; }}
+QLabel[role="hint"][tone="error"] {{ color: {DANGER}; }}
+QLabel[role="pill"] {{
+    background: rgba(139, 92, 246, 0.22); border: 1px solid {ACCENT}; border-radius: 9px;
+    padding: 1px 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; color: {ACCENT_HOVER};
+}}
+QLabel[role="toast"] {{
+    background: {RAISED}; color: {TEXT}; border: 1px solid {ACCENT};
+    border-radius: 10px; padding: 10px 18px; font-size: 14px;
+}}
+QLabel[role="toast"][tone="error"] {{ border-color: {DANGER}; }}
+QPushButton[role="icon"] {{ padding: 0; min-width: 38px; max-width: 38px; font-size: 15px; }}
+QLineEdit[role="code"] {{
+    font-family: "JetBrains Mono", "Fira Code", "DejaVu Sans Mono", monospace;
+    font-size: 26px; letter-spacing: 6px; padding: 10px 14px;
+}}
+QPlainTextEdit[role="mono"] {{
+    background: {BG}; border: 1px solid {BORDER}; border-radius: 10px; padding: 8px;
+    font-family: "JetBrains Mono", "DejaVu Sans Mono", monospace; font-size: 12px;
+}}
+QFrame[role="addrrow"] {{ background: transparent; border: 1px solid transparent; border-radius: 12px; }}
+QFrame[role="addrrow"][inuse="true"] {{ background: rgba(139, 92, 246, 0.08); border-color: rgba(139, 92, 246, 0.55); }}
+QFrame[role="serverrow"] {{ background: {BG}; border: 1px solid {BORDER}; border-radius: 12px; }}
+QFrame[role="serverrow"][inuse="true"] {{ border-color: {ACCENT}; }}
+
 QFrame[role="card"] {{
     background: {SURFACE}; border: 1px solid {BORDER}; border-radius: {RADIUS}px;
 }}
@@ -140,6 +174,23 @@ QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
     padding: 8px 10px; selection-background-color: {ACCENT};
 }}
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {{ border-color: {ACCENT}; }}
+QSpinBox, QDoubleSpinBox {{ padding-right: 30px; }}
+QSpinBox::up-button, QDoubleSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::down-button {{
+    subcontrol-origin: border; width: 26px; background: {RAISED}; border-left: 1px solid {BORDER};
+}}
+QSpinBox::up-button, QDoubleSpinBox::up-button {{
+    subcontrol-position: top right; border-top-right-radius: {RADIUS_SMALL}px;
+    border-bottom: 1px solid {BORDER};
+}}
+QSpinBox::down-button, QDoubleSpinBox::down-button {{
+    subcontrol-position: bottom right; border-bottom-right-radius: {RADIUS_SMALL}px;
+}}
+QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{ background: {ACCENT}; }}
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{ image: url(@ARROWS@/up.svg); width: 10px; height: 10px; }}
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{ image: url(@ARROWS@/down.svg); width: 10px; height: 10px; }}
+QSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:disabled,
+QSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:disabled {{ image: none; }}
 QComboBox QAbstractItemView {{
     background: {RAISED}; border: 1px solid {BORDER}; selection-background-color: {ACCENT};
 }}
@@ -163,6 +214,89 @@ QMenu::item:selected {{ background: {ACCENT}; }}
 """
 
 
+# ------------------------------------------------------------------ text size
+
+TEXT_SCALE_MIN = 85          # percent
+TEXT_SCALE_MAX = 130
+TEXT_SCALE_STEP = 5
+TEXT_SCALE_DEFAULT = 100
+
+_scale = 1.0
+_notifier = None
+
+
+def clamp_text_scale(percent) -> int:
+    try:
+        v = int(round(float(percent)))
+    except (TypeError, ValueError):
+        return TEXT_SCALE_DEFAULT
+    return max(TEXT_SCALE_MIN, min(TEXT_SCALE_MAX, v))
+
+
+def text_scale() -> float:
+    return _scale
+
+
+def set_text_scale(percent) -> int:
+    """Set the scale (clamped); returns the percent actually used."""
+    global _scale
+    pct = clamp_text_scale(percent)
+    _scale = pct / 100
+    return pct
+
+
+def px(size: float) -> int:
+    """A font pixel size at the current text scale."""
+    return max(1, round(size * _scale))
+
+
+def _arrow_dir() -> str:
+    """Spin-box arrow images, written once to the cache (QSS can only load images from files)."""
+    from ..config import cache_dir
+
+    d = cache_dir() / "ui"
+    shapes = {"up": "M2 7 L6 3 L10 7", "down": "M2 4 L6 8 L10 4"}
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        for name, path in shapes.items():
+            svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12">'
+                   f'<path d="{path}" fill="none" stroke="{TEXT}" stroke-width="1.8" '
+                   f'stroke-linecap="round" stroke-linejoin="round"/></svg>')
+            f = d / f"{name}.svg"
+            if not f.exists() or f.read_text() != svg:
+                f.write_text(svg)
+    except OSError:
+        return ""
+    return d.as_posix()
+
+
+def qss() -> str:
+    """The stylesheet at the current text scale. Sizes marked /* fixed */ don't scale."""
+    out = re.sub(r"font-size: (\d+)px(?! /\* fixed)", lambda m: f"font-size: {px(int(m[1]))}px", _QSS)
+    return out.replace("@ARROWS@", _arrow_dir())
+
+
+def notifier():
+    """A QObject whose changed() fires after the text scale is re-applied."""
+    global _notifier
+    if _notifier is None:
+        from PySide6.QtCore import QObject, Signal
+
+        class _Notifier(QObject):
+            changed = Signal()
+
+        _notifier = _Notifier()
+    return _notifier
+
+
+def apply_text_scale(app, percent) -> int:
+    """Change the text size live: restyle every widget, then tell painted views."""
+    pct = set_text_scale(percent)
+    app.setStyleSheet(qss())
+    notifier().changed.emit()
+    return pct
+
+
 def apply(app) -> None:
     """Fusion style + matching QPalette (so native-drawn bits stay dark) + QSS."""
     from PySide6.QtGui import QColor, QPalette
@@ -181,4 +315,4 @@ def apply(app) -> None:
     pal.setColor(QPalette.Disabled, QPalette.Text, QColor(MUTED))
     pal.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(MUTED))
     app.setPalette(pal)
-    app.setStyleSheet(QSS)
+    app.setStyleSheet(qss())

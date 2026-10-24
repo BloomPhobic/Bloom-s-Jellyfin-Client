@@ -7,6 +7,7 @@ from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtWidgets import (QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton,
                                QScrollArea, QToolButton, QVBoxLayout, QWidget)
 
+from .flow import flow_widget
 from ...api.browse import DEFAULT_DESC, LETTERS, SORTS, FilterOptions, LibraryQuery
 
 STATUS = [("all", "All"), ("unplayed", "Unwatched"), ("played", "Watched")]
@@ -188,11 +189,14 @@ class FilterBar(QWidget):
         self.count = QLabel("")
         self.count.setProperty("role", "muted")
 
+        # The controls wrap onto a second line rather than squash (narrow window, big text).
+        controls, flow = flow_widget(8)
         for w in (self.sort, self.order, self.status, self.fav, self.genres_btn, self.years_btn,
                   self.clear_btn):
-            h.addWidget(w)
-        h.addStretch()
-        h.addWidget(self.count)
+            flow.addWidget(w)
+        h.addWidget(controls, 1)
+        h.addWidget(self.count, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
+        self.count.setMinimumHeight(self.sort.sizeHint().height())
 
     @staticmethod
     def _filter_button(text: str) -> QToolButton:

@@ -33,6 +33,10 @@ DEFAULTS: dict[str, Any] = {
     "last_address": None,       # last base URL that worked
     "device_id": None,          # generated once
     "last_user": None,          # {"id": ..., "name": ...}
+    # Saved servers. The active one's addresses/server_id/last_address/last_user
+    # live in the top-level keys above; Session.switch_server swaps them in and out.
+    "servers": [],              # [{"key", "name", "addresses", "server_id", "last_address", "last_user"}]
+    "active_server": None,      # key of the entry in "servers" that's in use
     "network": {
         "never_stream_public": True,
         "probe_timeout_private": 1.5,
@@ -74,6 +78,7 @@ DEFAULTS: dict[str, Any] = {
     },
     "ui": {
         "smooth_scroll": True,
+        "text_scale": 100,          # percent; clamped by ui.theme
     },
     "library_state": {},   # per-library sort/filter
     "series_tracks": {},   # per-series audio/subtitle memory
@@ -136,8 +141,9 @@ def _migrate(raw: dict) -> None:
         pb.setdefault("skip_credits", mode)
 
 
-# Kept by "Reset all settings": your server, addresses and sign-in.
-KEEP_ON_RESET = ("addresses", "server_id", "last_address", "device_id", "last_user", "tokens")
+# Kept by "Reset all settings": your servers, addresses and sign-in.
+KEEP_ON_RESET = ("addresses", "server_id", "last_address", "device_id", "last_user", "tokens",
+                 "servers", "active_server")
 
 
 class Settings:

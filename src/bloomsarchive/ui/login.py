@@ -12,7 +12,7 @@ import time
 from typing import Any, Callable
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtWidgets import (QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineEdit,
+from PySide6.QtWidgets import (QButtonGroup, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu,
                                QPushButton, QStackedWidget, QVBoxLayout, QWidget)
 
 from .. import APP_NAME
@@ -20,6 +20,7 @@ from ..api import auth
 from ..api.client import ConnectionFailed, HttpError
 from ..api.models import User
 from ..session import Session
+from .servers import fill_server_menu
 from .widgets.avatar import AvatarTile
 from .widgets.image_loader import ImageLoader
 from .workers import run_async
@@ -71,6 +72,7 @@ def describe_error(e: Exception) -> str:
 
 class LoginScreen(QWidget):
     signed_in = Signal(object)      # User
+    switch_server = Signal(str)     # saved-server key
 
     def __init__(self, session: Session, loader: ImageLoader, parent: QWidget | None = None):
         super().__init__(parent)
@@ -134,6 +136,14 @@ class LoginScreen(QWidget):
 
         self.footer = _label("", "muted")
         outer.addWidget(self.footer)
+        self.server_link = _button("Use another server", "link")
+        self.server_menu = QMenu(self.server_link)
+        self.server_link.setMenu(self.server_menu)
+        foot = QHBoxLayout()
+        foot.addStretch()
+        foot.addWidget(self.server_link)
+        foot.addStretch()
+        outer.addLayout(foot)
 
     def _build_choose(self) -> QWidget:
         w = QWidget()
@@ -246,6 +256,9 @@ class LoginScreen(QWidget):
                                 f"via {c.label or c.url}")
         else:
             self.footer.setText("")
+        others = fill_server_menu(self.server_menu, self.session, self.switch_server.emit,
+                                  include_active=False)
+        self.server_link.setVisible(others > 0)
 
     def _load_users(self) -> None:
         self.choose_status.setText("Loading profiles…")
